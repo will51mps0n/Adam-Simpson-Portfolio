@@ -54,15 +54,19 @@ local ServerStorage = game:GetService("ServerStorage")
 local StarterPack = game:GetService("StarterPack")
 local CollectionService = game:GetService("CollectionService")
 
-local HIDER_SPEED = 16
-local MONSTER_SPEED = 26
-local MONSTER_SCALE = 1.5 -- the built-in monster is 1.5x as tall as a hider
-local MONSTER_MAX_HEIGHT = 11 -- your monster model is shrunk to this height if it's taller, so it fits the tunnels
+-- walking / sprinting (Shift, uses stamina) / crouching (C) speeds
+local HIDER_SPEEDS = { walk = 16, sprint = 24, crouch = 8 }
+local MONSTER_SPEEDS = { walk = 20, sprint = 30, crouch = 10 }
+local MONSTER_HEIGHT = 10 -- studs (hiders are about 5). Taller won't fit the tunnels; shack doors are 7.5
+local MONSTER_SCALE = 1.9 -- the built-in monster (your own character in black) is this much bigger than a hider
+local PUNCH_COOLDOWN = 1 -- seconds between the monster's punches
+local PUNCH_REACH = 5 -- studs in front of the monster, on top of its own size
 local LIGHT = Color3.fromRGB(255, 238, 210)
 local ROAR_COOLDOWN = 25
 local ROAR_RANGE = 140
--- a built-in Roblox sound; swap in any sound you like, e.g. "rbxassetid://1234567"
+-- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
 local ROAR_SOUND = "rbxasset://sounds/uuhhh.mp3"
+local PUNCH_SOUND = "rbxasset://sounds/swoosh.wav"
 
 local function remote(name)
 	local r = ReplicatedStorage:FindFirstChild(name)
@@ -75,6 +79,7 @@ local function remote(name)
 end
 local toggleLight = remote("CaveHunt_ToggleFlashlight")
 local roarRemote = remote("CaveHunt_Roar")
+local punchRemote = remote("CaveHunt_Punch")
 local shakeRemote = remote("CaveHunt_Shake")
 local Debris = game:GetService("Debris")
 
@@ -175,6 +180,17 @@ local function addFlashlight(character)
 	spill.Parent = mount
 end
 
+-- the client's movement script reads these (sprinting and crouching happen on the client)
+local function setSpeeds(character, speeds)
+	character:SetAttribute("WalkSpeed", speeds.walk)
+	character:SetAttribute("SprintSpeed", speeds.sprint)
+	character:SetAttribute("CrouchSpeed", speeds.crouch)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = speeds.walk
+	end
+end
+
 local function setupHider(player, character)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
@@ -183,7 +199,8 @@ local function setupHider(player, character)
 	pcall(function()
 		humanoid:ApplyDescription(hiderLook(player))
 	end)
-	humanoid.WalkSpeed = HIDER_SPEED
+	setSpeeds(character, HIDER_SPEEDS)
+	player.CameraMinZoomDistance = 0.5
 	addFlashlight(character) -- after the new look, because that can replace the head
 	giveTools(player, HIDER_TOOLS)
 end
@@ -250,35 +267,63 @@ end
 
 local function setupMonster(player, character)
 	character:SetAttribute("IsMonster", true)
+	character:SetAttribute("Reach", PUNCH_REACH + character:GetExtentsSize().Y * 0.3) -- bigger monsters reach further
 	clearTools(player) -- no flashlight or phone for the monster
 	giveTools(player, MONSTER_TOOLS)
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		humanoid.WalkSpeed = MONSTER_SPEED
+	setSpeeds(character, MONSTER_SPEEDS)
+	-- the camera stays far enough back to see the monster's whole body
+	player.CameraMinZoomDistance = math.max(8, character:GetExtentsSize().Y * 1.1)
+end
+
+------------------------------------------------------------------ the monster's punch
+-- the monster has to hit a hider (click, R2, or the Hit button) to catch them: the closest one in
+-- front of it, within reach, that isn't hiding, and not through a wall
+local lastPunch = {}
+punchRemote.OnServerEvent:Connect(function(player)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if player:GetAttribute("Role") ~= "Monster" or not root or os.clock() - (lastPunch[player] or -math.huge) < PUNCH_COOLDOWN * 0.8 then
+		return
 	end
-	-- one touch kills a hider who isn't hiding
-	local lastHit = {}
-	for _, part in ipairs(character:GetDescendants()) do
-		if part:IsA("BasePart") then
-			part.Touched:Connect(function(hit)
-				local victimCharacter = hit:FindFirstAncestorOfClass("Model")
-				local victim = victimCharacter and Players:GetPlayerFromCharacter(victimCharacter)
-				if not victim or victim == player or victim:GetAttribute("Role") == "Monster" or victim:GetAttribute("Hidden") then
-					return
+	lastPunch[player] = os.clock()
+	local swing = Instance.new("Sound")
+	swing.SoundId = PUNCH_SOUND
+	swing.PlaybackSpeed = 0.7
+	swing.Volume = 1.5
+	swing.Parent = root
+	swing:Play()
+	Debris:AddItem(swing, 2)
+	local reach = character:GetAttribute("Reach") or 8
+	local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local best, bestDistance
+	for _, other in ipairs(Players:GetPlayers()) do
+		local otherCharacter = other.Character
+		local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
+		local humanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
+		if other ~= player and other:GetAttribute("Role") == "Hider" and not other:GetAttribute("Hidden") and otherRoot and humanoid and humanoid.Health > 0 then
+			local offset = otherRoot.Position - root.Position
+			local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+			local distance = flatOffset.Magnitude
+			local inFront = distance < 2 or flatOffset.Unit:Dot(look) > 0.3
+			if distance <= reach and math.abs(offset.Y) < reach and inFront and (not best or distance < bestDistance) then
+				params.FilterDescendantsInstances = { character, otherCharacter }
+				if not workspace:Raycast(root.Position, offset, params) then -- nothing in between
+					best, bestDistance = other, distance
 				end
-				local victimHumanoid = victimCharacter:FindFirstChildOfClass("Humanoid")
-				if victimHumanoid and victimHumanoid.Health > 0 and os.clock() - (lastHit[victim] or 0) > 1 then
-					lastHit[victim] = os.clock()
-					victimHumanoid.Health = 0
-					local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
-					if reward then
-						reward:Fire(player, "Catch")
-					end
-				end
-			end)
+			end
 		end
 	end
-end
+	if best then
+		local humanoid = best.Character:FindFirstChildOfClass("Humanoid")
+		humanoid.Health = 0
+		local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
+		if reward then
+			reward:Fire(player, "Catch")
+		end
+	end
+end)
 
 -- your monster model: ServerStorage.Monster, or the model GameScripts found in your Workspace and moved
 -- to ServerStorage for you (it has the CaveHuntMonster attribute)
@@ -303,11 +348,11 @@ local function stopScripts(model)
 	end
 end
 
-local function shrinkToFit(model)
+local function sizeToMonster(model) -- grown or shrunk to MONSTER_HEIGHT
 	local height = model:GetExtentsSize().Y
-	if height > MONSTER_MAX_HEIGHT then
+	if height > 0.5 then
 		pcall(function()
-			model:ScaleTo(model:GetScale() * MONSTER_MAX_HEIGHT / height)
+			model:ScaleTo(model:GetScale() * math.clamp(MONSTER_HEIGHT / height, 0.25, 6))
 		end)
 	end
 end
@@ -330,7 +375,7 @@ local function wearCostume(character, template)
 	local costume = template:Clone()
 	costume.Name = "MonsterCostume"
 	stopScripts(costume)
-	shrinkToFit(costume)
+	sizeToMonster(costume)
 	pcall(function()
 		character:ScaleTo(math.clamp(costume:GetExtentsSize().Y / 5, 0.6, 2.2))
 	end)
@@ -394,7 +439,7 @@ local function becomeMonster(player)
 				end
 				animate:Clone().Parent = body
 			end
-			shrinkToFit(body)
+			sizeToMonster(body)
 			body.Name = player.Name
 			body:PivotTo(spawnAt or character:GetPivot())
 			player.Character = body
@@ -497,6 +542,7 @@ local function onPlayer(player)
 	if player:GetAttribute("Role") == nil then
 		player:SetAttribute("Role", "Hider")
 	end
+	player.DevEnableMouseLock = false -- Shift is sprint, not shift lock
 	player.CharacterAppearanceLoaded:Connect(function(character)
 		if player:GetAttribute("Role") == "Hider" then
 			setupHider(player, character)
@@ -520,6 +566,7 @@ Players.PlayerRemoving:Connect(function(player)
 	looks[player] = nil
 	converting[player] = nil
 	lastRoar[player] = nil
+	lastPunch[player] = nil
 end)
 ]==]
 
@@ -1122,6 +1169,7 @@ local function slip(victim, humanoid, owner)
 	slipping[humanoid] = true
 	local speed, power, height = humanoid.WalkSpeed, humanoid.JumpPower, humanoid.JumpHeight
 	humanoid.WalkSpeed, humanoid.JumpPower, humanoid.JumpHeight = 0, 0, 0
+	humanoid.Parent:SetAttribute("Stunned", true) -- the client's movement script holds you still
 	humanoid.Sit = true
 	local root = humanoid.Parent:FindFirstChild("HumanoidRootPart")
 	if root then
@@ -1130,6 +1178,9 @@ local function slip(victim, humanoid, owner)
 	notify:FireClient(victim, "You slipped on " .. owner .. "'s banana peel!")
 	task.delay(2, function()
 		slipping[humanoid] = nil
+		if humanoid.Parent then
+			humanoid.Parent:SetAttribute("Stunned", nil)
+		end
 		if humanoid.Parent and humanoid.WalkSpeed == 0 then
 			humanoid.WalkSpeed, humanoid.JumpPower, humanoid.JumpHeight = speed, power, height
 			humanoid.Sit = false
@@ -1788,6 +1839,234 @@ end
 local function clock(seconds)
 	return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
 end
+local cameraShake = Vector3.new() -- the roar / air horn shake, added to the camera by the movement code
+
+-- Movement: hold Shift to sprint (it uses stamina), C to crouch and sneak (slow and quiet). The
+-- speeds come from the server (attributes on your character); stamina is kept here. Phones get
+-- Run and Crouch buttons, gamepads use L3 and B.
+local STAMINA_DRAIN = { Hider = 20, Monster = 14 } -- per second while sprinting (100 is full)
+local STAMINA_REGEN = { Hider = 15, Monster = 18 } -- per second, starting a second after you stop sprinting
+local CROUCH_ANIMATION = "" -- an animation you made, e.g. "rbxassetid://1234567", plays while crouching
+local move = { stamina = 100, sprinting = false, crouching = false, wantSprint = false, restAt = 0, offset = Vector3.new() }
+local crouchTrack
+local function setCrouch(on)
+	move.crouching = on
+	if crouchTrack then
+		crouchTrack:Stop()
+		crouchTrack = nil
+	end
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if on and animator and CROUCH_ANIMATION ~= "" then
+		local animation = Instance.new("Animation")
+		animation.AnimationId = CROUCH_ANIMATION
+		local ok, track = pcall(animator.LoadAnimation, animator, animation)
+		if ok and track then
+			track.Looped = true
+			track:Play()
+			crouchTrack = track
+		end
+	end
+end
+ContextActionService:BindActionAtPriority("CaveHunt_Sprint", function(_, state)
+	move.wantSprint = state == Enum.UserInputState.Begin
+	return Enum.ContextActionResult.Sink
+end, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonL3)
+ContextActionService:SetTitle("CaveHunt_Sprint", "Run")
+ContextActionService:BindAction("CaveHunt_Crouch", function(_, state)
+	if state == Enum.UserInputState.Begin then
+		setCrouch(not move.crouching)
+	end
+	return Enum.ContextActionResult.Sink
+end, true, Enum.KeyCode.C, Enum.KeyCode.LeftControl, Enum.KeyCode.ButtonB)
+ContextActionService:SetTitle("CaveHunt_Crouch", "Crouch")
+player.CharacterAdded:Connect(function()
+	move.stamina = 100
+	setCrouch(false)
+end)
+RunService.Heartbeat:Connect(function(dt)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return
+	end
+	local role = isMonster() and "Monster" or "Hider"
+	local moving = humanoid.MoveDirection.Magnitude > 0.1
+	local wants = move.wantSprint and moving and not move.crouching and not player:GetAttribute("Hidden")
+	if wants and move.stamina > (move.sprinting and 0 or 20) then -- once you're out, wait until it's back to 20
+		move.sprinting = true
+		move.stamina = math.max(0, move.stamina - STAMINA_DRAIN[role] * dt)
+		move.restAt = os.clock() + 1
+	else
+		move.sprinting = false
+		if os.clock() > move.restAt then
+			move.stamina = math.min(100, move.stamina + STAMINA_REGEN[role] * dt)
+		end
+	end
+	local walk = character:GetAttribute("WalkSpeed") or 16
+	local speed = walk
+	if character:GetAttribute("Stunned") then
+		speed = 0 -- slipped on a banana peel
+	elseif move.sprinting then
+		speed = character:GetAttribute("SprintSpeed") or walk * 1.5
+	elseif move.crouching then
+		speed = character:GetAttribute("CrouchSpeed") or walk * 0.5
+	end
+	if humanoid.WalkSpeed ~= speed then
+		humanoid.WalkSpeed = speed
+	end
+	-- crouching lowers your view
+	move.offset = move.offset:Lerp(move.crouching and Vector3.new(0, -1.5, 0) or Vector3.new(), math.min(1, dt * 10))
+	humanoid.CameraOffset = move.offset + cameraShake
+end)
+
+-- the stamina bar (only while it isn't full) and a CROUCHING tag, just above the hotbar
+task.spawn(function()
+	local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), { Name = "CaveHunt_Stamina", ResetOnSpawn = false })
+	local back = make("Frame", gui, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -84),
+		Size = UDim2.fromOffset(220, 8),
+		BackgroundTransparency = 0.4,
+		BackgroundColor3 = Color3.fromRGB(10, 10, 14),
+	})
+	round(back, 4)
+	local fill = make("Frame", back, { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(120, 220, 140) })
+	round(fill, 4)
+	local tag = make("TextLabel", gui, {
+		Text = "CROUCHING",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -96),
+		Size = UDim2.fromOffset(220, 18),
+		TextSize = 13,
+		TextColor3 = Color3.fromRGB(190, 200, 215),
+		Visible = false,
+	})
+	while true do
+		local alive = player.Character ~= nil
+		back.Visible = alive and (move.stamina < 99.5 or move.sprinting)
+		fill.Size = UDim2.fromScale(move.stamina / 100, 1)
+		fill.BackgroundColor3 = move.stamina < 25 and Color3.fromRGB(230, 90, 70) or Color3.fromRGB(120, 220, 140)
+		tag.Visible = alive and move.crouching
+		task.wait(0.05)
+	end
+end)
+
+-- Footsteps: everyone's steps play on every player's computer (like Roblox's own footsteps), from
+-- where that character is. Running is louder and carries further than walking, and crouching is
+-- almost silent. The monster's steps are deep, heavy stomps. Swap in your own sounds here.
+local STEP_SOUNDS = {
+	Hider = { id = "rbxasset://sounds/action_footsteps_plastic.mp3", pitch = 1.3 },
+	Monster = { id = "rbxasset://sounds/action_footsteps_plastic.mp3", pitch = 0.55, stomp = "rbxasset://sounds/action_jump_land.mp3", stride = 6 },
+}
+local STEP_LOUDNESS = { -- { volume, heard up to this many studs away }; the monster is 1.6x both
+	crouch = { 0.05, 16 },
+	walk = { 0.6, 70 },
+	sprint = { 1.3, 150 },
+}
+local steps = setmetatable({}, { __mode = "k" })
+RunService.Heartbeat:Connect(function(dt)
+	for _, other in ipairs(Players:GetPlayers()) do
+		local character = other.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if root and humanoid then
+			local st = steps[character]
+			if not st then
+				st = { walked = 0 }
+				st.loop = make("Sound", root, { Name = "CaveHunt_Steps", Looped = true })
+				st.stomp = make("Sound", root, { Name = "CaveHunt_Stomp" })
+				steps[character] = st
+			end
+			local default = root:FindFirstChild("Running") -- Roblox's own footsteps: these replace them
+			if default and default:IsA("Sound") and default.Volume > 0 then
+				default.Volume = 0
+			end
+			local monster = other:GetAttribute("Role") == "Monster"
+			local kind = STEP_SOUNDS[monster and "Monster" or "Hider"]
+			if st.loop.SoundId ~= kind.id then
+				st.loop.SoundId = kind.id
+			end
+			local v = root.AssemblyLinearVelocity
+			local speed = Vector3.new(v.X, 0, v.Z).Magnitude
+			if speed > 2 and math.abs(v.Y) < 6 and humanoid.Health > 0 and not other:GetAttribute("Hidden") then
+				local walk = character:GetAttribute("WalkSpeed") or 16
+				local crouch = character:GetAttribute("CrouchSpeed") or walk * 0.5
+				local sprint = character:GetAttribute("SprintSpeed") or walk * 1.5
+				local mode = speed > (walk + sprint) / 2 and "sprint" or (speed < (crouch + walk) / 2 and "crouch" or "walk")
+				local volume = STEP_LOUDNESS[mode][1] * (monster and 1.6 or 1)
+				local reach = STEP_LOUDNESS[mode][2] * (monster and 1.6 or 1)
+				st.loop.Volume = volume
+				st.loop.RollOffMaxDistance = reach
+				st.loop.RollOffMinDistance = reach / 10
+				st.loop.PlaybackSpeed = kind.pitch * math.clamp(speed / walk, 0.6, 1.5)
+				if not st.loop.IsPlaying then
+					st.loop:Play()
+				end
+				if kind.stomp then
+					st.walked += speed * dt
+					if st.walked >= kind.stride then
+						st.walked = 0
+						st.stomp.SoundId = kind.stomp
+						st.stomp.PlaybackSpeed = 0.6
+						st.stomp.Volume = volume
+						st.stomp.RollOffMaxDistance = reach
+						st.stomp.RollOffMinDistance = reach / 10
+						st.stomp:Play()
+					end
+				end
+			elseif st.loop.IsPlaying then
+				st.loop:Stop()
+			end
+		end
+	end
+end)
+
+-- The monster's punch: click (R2 on a gamepad, the Hit button on a phone). The server decides
+-- who gets hit: the closest hider in front of the monster, within reach, not through a wall.
+local PUNCH_ANIMATIONS = { R15 = "rbxassetid://522635514", R6 = "rbxassetid://129967390" } -- Roblox's own sword slash
+task.spawn(function()
+	local punch = ReplicatedStorage:WaitForChild("CaveHunt_Punch", 30)
+	if not punch then
+		return
+	end
+	local readyAt = 0
+	local function swing()
+		if os.clock() < readyAt then
+			return
+		end
+		readyAt = os.clock() + 1
+		punch:FireServer()
+		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			local animation = Instance.new("Animation")
+			animation.AnimationId = PUNCH_ANIMATIONS[humanoid.RigType == Enum.HumanoidRigType.R6 and "R6" or "R15"]
+			local ok, track = pcall(animator.LoadAnimation, animator, animation)
+			if ok and track then
+				track:Play(0.05, 1, 1.4)
+			end
+		end
+	end
+	local bound = false
+	local function update()
+		if isMonster() and not bound then
+			ContextActionService:BindAction("CaveHunt_Punch", function(_, state)
+				if state == Enum.UserInputState.Begin then
+					swing()
+				end
+				return Enum.ContextActionResult.Pass
+			end, true, Enum.UserInputType.MouseButton1, Enum.KeyCode.ButtonR2)
+			ContextActionService:SetTitle("CaveHunt_Punch", "Hit")
+			bound = true
+		elseif not isMonster() and bound then
+			ContextActionService:UnbindAction("CaveHunt_Punch")
+			bound = false
+		end
+	end
+	player:GetAttributeChangedSignal("Role"):Connect(update)
+	update()
+end)
 
 -- The round timer at the top of the screen, the monster's blindfold while the hiders hide,
 -- and the result when a round ends
@@ -2092,16 +2371,12 @@ task.spawn(function()
 	notify.OnClientEvent:Connect(show)
 	shake.OnClientEvent:Connect(function(message)
 		show(message or "The monster roared nearby!")
-		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-		if not humanoid then
-			return
-		end
 		local stopAt = os.clock() + 1.2
 		while os.clock() < stopAt do
-			humanoid.CameraOffset = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * 1.2
+			cameraShake = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * 1.2
 			RunService.RenderStepped:Wait()
 		end
-		humanoid.CameraOffset = Vector3.new()
+		cameraShake = Vector3.new()
 	end)
 	local reveal = ReplicatedStorage:WaitForChild("CaveHunt_Reveal", 30)
 	if reveal then
@@ -2377,16 +2652,18 @@ local function setCaveMood(on)
 				Brightness = Lighting.Brightness,
 				EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
 				EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
+				ExposureCompensation = Lighting.ExposureCompensation,
 				FogStart = Lighting.FogStart,
 				FogEnd = Lighting.FogEnd,
 			},
 		}
-		local ambient = seeing and Color3.fromRGB(90, 120, 90) or (monster and Color3.fromRGB(30, 8, 8) or Color3.new(0, 0, 0))
+		local ambient = seeing and Color3.fromRGB(170, 190, 170) or (monster and Color3.fromRGB(30, 8, 8) or Color3.new(0, 0, 0))
 		Lighting.Ambient = ambient
 		Lighting.OutdoorAmbient = ambient
 		Lighting.Brightness = 0 -- the sun and moon would light the cave through the rock
 		Lighting.EnvironmentDiffuseScale = 0
 		Lighting.EnvironmentSpecularScale = 0
+		Lighting.ExposureCompensation = seeing and 0.6 or 0
 		Lighting.FogStart = 0
 		Lighting.FogEnd = 100000 -- no fog
 		if atmosphere then -- an Atmosphere glows like daylight haze even inside the cave: switch it off
@@ -2401,13 +2678,26 @@ local function setCaveMood(on)
 			atmosphere.Glare = 0
 			atmosphere.Haze = 0
 		end
-		grade.Contrast = seeing and 0.25 or 0.15
+		grade.Contrast = seeing and 0.1 or 0.15
 		grade.Saturation = seeing and -1 or (monster and -0.7 or -0.4)
-		grade.Brightness = seeing and 0.05 or -0.05
-		grade.TintColor = seeing and Color3.fromRGB(140, 255, 150) or (monster and Color3.fromRGB(255, 200, 200) or Color3.fromRGB(222, 230, 255))
+		grade.Brightness = seeing and 0.1 or -0.05
+		grade.TintColor = seeing and Color3.fromRGB(150, 255, 160) or (monster and Color3.fromRGB(255, 200, 200) or Color3.fromRGB(222, 230, 255))
+		bloom.Intensity = seeing and 0.25 or 0.7
+		bloom.Threshold = seeing and 0.97 or 0.85
 	end
 	grade.Enabled = on
 	bloom.Enabled = on
+end
+
+-- night vision also lights up the rock around the monster (a light only the monster's own screen has)
+local function updateNightLight(on)
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local light = root and root:FindFirstChild("CaveHunt_NightLight")
+	if on and root and not light then
+		make("PointLight", root, { Name = "CaveHunt_NightLight", Range = 60, Brightness = 1.2, Color = Color3.fromRGB(200, 255, 210), Shadows = false })
+	elseif not on and light then
+		light:Destroy()
+	end
 end
 
 local inCave = false
@@ -2425,6 +2715,7 @@ ContextActionService:BindAction("CaveHunt_NightVision", function(_, state)
 		if inCave then
 			setCaveMood(true)
 		end
+		updateNightLight(inCave and nightVision and isMonster())
 	end
 	return Enum.ContextActionResult.Sink
 end, false, Enum.KeyCode.N)
@@ -2445,6 +2736,7 @@ task.spawn(function()
 			inCave = now
 			setCaveMood(now)
 		end
+		updateNightLight(inCave and nightVision and isMonster())
 	end
 end)
 

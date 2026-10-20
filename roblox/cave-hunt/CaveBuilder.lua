@@ -402,7 +402,7 @@ local function run(options)
 								floorB = s.pos.Y,
 								flatA = 0,
 								flatB = 0,
-								r = 7,
+								r = 8.5, -- 12.75 studs high: room for the monster
 								wiggle = 0,
 							})
 							table.insert(rooms, nook)

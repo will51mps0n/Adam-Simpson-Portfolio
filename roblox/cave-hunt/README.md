@@ -73,10 +73,13 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Phone (hotbar, 8s cooldown):** pick another hider from the list. Their phone rings for 4 seconds: everyone nearby hears it, and "RING RING" flashes above them with a blue glow, even if they're inside a closet. They get a message saying who's calling.
 
 **The monster**
-- **Spawn and speed:** it spawns at the far end of the Great Cavern, the Old Mine or the Crystal Grotto. Speed is 26, against the hiders' 16.
-- **Killing:** touching a hider who isn't hiding kills them.
+- **Spawn:** at the far end of the Great Cavern, the Old Mine or the Crystal Grotto.
+- **Size:** 10 studs tall, twice a hider (`MONSTER_HEIGHT`). It fits through every tunnel and nook, but not the shack doors (7.5 studs) or doors in your own buildings that are sized for normal players. It can still punch through a doorway and search hiding spots through walls.
+- **Speed:** walks at 20 and sprints at 30, against the hiders' 16 and 24. It has more stamina than a hider.
+- **Punching:** **click** (R2 on a gamepad, the Hit button on a phone). It hits the closest hider in front of it, within reach (bigger monsters reach further), never through a wall. One punch catches them. Once a second.
+- **Camera:** stays pulled back far enough to always show the monster's body.
 - **Searching:** pressing **E** ("Search") on a hiding spot throws whoever is inside out.
-- **Vision:** no flashlight. Instead it has green night vision that shows the whole cave. **N** switches it off and on (off is a dim red view).
+- **Vision:** no flashlight. Instead it has bright green night vision that shows the whole cave, plus a light around the monster that only the monster sees. **N** switches it off and on (off is a dim red view).
 - **Hotbar abilities:**
   1. **Leap** (6s): a big lunge forward and up.
   2. **Sense** (15s): for 4 seconds, every hider is outlined through walls and occupied hiding spots glow.
@@ -89,6 +92,26 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
   - **Any other model:** the monster's character wears it like a costume: welded on, with the player's own body hidden.
   - **Size:** taller than 11 studs gets shrunk to fit the tunnels (`MONSTER_MAX_HEIGHT` at the top of `CaveHunt_Players`).
   - **No model found:** the monster is your own character in black with red eyes.
+
+**Moving (everyone)**
+- **Sprint:** hold **Shift**. It uses stamina: the bar above the hotbar shows it, and it refills a second after you stop. Once it's empty, you have to wait until it's back to 20% before you can run again.
+- **Crouch / sneak:** press **C** (or Ctrl). Half speed, lower camera, and your steps are almost silent. Press it again to stand up.
+- **Gamepad and phone:** L3 / B on a gamepad, Run / Crouch buttons on a phone.
+- **Crouch animation:** there isn't one built in, because Roblox only plays animations you own. Make one in the Animation Editor and put its ID in `CROUCH_ANIMATION` at the top of `StarterPlayerScripts.CaveHunt_Client`.
+
+| Speed | Hiders | Monster |
+| --- | --- | --- |
+| Walk | 16 | 20 |
+| Sprint (Shift) | 24 | 30 |
+| Crouch (C) | 8 | 10 |
+| Stamina | runs out after about 5 s | runs out after about 7 s |
+
+Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` at the top of `ServerScriptService.CaveHunt_Players`, and stamina with `STAMINA_DRAIN` / `STAMINA_REGEN` in `CaveHunt_Client`. Shift lock is turned off, because Shift is sprint.
+
+**Footsteps:** everyone hears everyone's steps, coming from where they are.
+- **How loud:** walking can be heard about 70 studs away, sprinting about 150, crouching about 16.
+- **The monster:** deep, heavy stomps, louder than a hider and carrying 1.6× as far.
+- **Your own sounds:** put sound IDs in `STEP_SOUNDS` at the top of `CaveHunt_Client`.
 
 **How hotbar items work:** pick one (its number key, or click its slot) and it's used straight away. While it recharges, its slot counts down the seconds.
 
@@ -121,7 +144,7 @@ Except for Snitch and Fake Noise, items can't be used while you're hiding.
 **Changing the coin amounts:** see the top of `ServerScriptService.CaveHunt_Shop`: `START_COINS`, `INCOME`, `INCOME_EVERY`, `REWARDS`, `PICKUPS` and `PICKUP_VALUE`.
 
 **Sounds:** everything uses sounds built into Roblox. To use your own, change these to any sound ID, e.g. `"rbxassetid://1234567"`:
-- `ROAR_SOUND` at the top of `ServerScriptService.CaveHunt_Players`.
+- `ROAR_SOUND` and `PUNCH_SOUND` at the top of `ServerScriptService.CaveHunt_Players`.
 - `RINGTONE`, `AIRHORN_SOUND` and `SLIP_SOUND` at the top of `ServerScriptService.CaveHunt_Shop`.
 
 The air horn is a built-in beep played low and loud, so it's the one most worth swapping for a real horn sound.
@@ -188,7 +211,7 @@ Use the same command, with only the scripts you want in `{...}`.
 | `ORIGIN` | `Vector3.new(0, 64, 0)` | Center of the cave (keep Y a multiple of 4) |
 | `SEED` | `2024` | A different number gives a different layout of tunnels and props |
 | `OVERWRITE` | `false` | Must be `true` to rebuild once a cave exists (the quick-start command sets it). **This wipes everything inside `Workspace.CaveSystem`.** |
-| `TUNNEL_SIZE` | `1` | Tunnels are about 11–23 studs tall. Use `1.3` or more if the monster is huge. The built-in monster is about 8 studs tall. |
+| `TUNNEL_SIZE` | `1` | Tunnels are about 16–20 studs tall in the middle, and nook passages about 13. That's enough for the 10-stud monster. Use `1.3` or more if you make the monster taller. |
 | `DARK_CAVE` | `true` | Only a few dim lights. `false` puts the lanterns back in the tunnels and rooms. |
 | `DISABLE_OTHER_SPAWNS` | `true` | Disables your other SpawnLocations so playtests start in the cave |
 | `LIGHT_SHADOWS` | `false` | Shadows from the cave's lights (prettier, but slower) |
