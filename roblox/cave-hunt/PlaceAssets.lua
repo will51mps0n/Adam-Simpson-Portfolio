@@ -20,8 +20,8 @@
 	If it guessed wrong, drag the model to the other folder and run again.
 	Add new models later by dragging them into those folders.
 	Optional attributes on a model:
-	  Count    (number) how many copies to place (default 3 hiding / 2
-	           decor / 1 for anything bigger than 30 studs)
+	  Count    (number) how many copies to place (default up to 6 hiding /
+	           2 decor / 1 for anything bigger than 30 studs)
 	  CaveRole (string) "Hiding", "Decor" or "Skip" (leave it in Workspace)
 
 	RUN: use the one-line Command Bar command in README.md (or paste
@@ -36,7 +36,7 @@
 -- Settings. Override any of them from the Command Bar, e.g. require(M)({ SEED = 5 })
 local DEFAULTS = {
 	SEED = false, -- false = a new arrangement every run. Put a number to get the same one each time
-	HIDING_COPIES = 3,
+	HIDING_COPIES = 6,
 	DECOR_COPIES = 2,
 	BIG = 30, -- studs across; anything bigger is placed once unless it has a Count attribute
 	COLLECT_FROM_WORKSPACE = "auto", -- "auto" = only the first time (before CaveAssets exists); true = always; false = never
@@ -214,6 +214,15 @@ local function run(options)
 						-- its name, then its folder's name, then its size (tall enough to stand in, not huge)
 						role = roleFromName(inst.Name) or entry.folderRole or ((footprintOf(inst) <= CONFIG.BIG and size.Y >= 5) and "Hiding" or "Decor")
 					end
+					if inst:GetAttribute("FloorOffset") == nil then
+						local params = RaycastParams.new()
+						params.FilterType = Enum.RaycastFilterType.Exclude
+						params.FilterDescendantsInstances = { inst }
+						local hit = workspace:Raycast(Vector3.new((lo.X + hi.X) / 2, hi.Y + 1, (lo.Z + hi.Z) / 2), Vector3.new(0, -(size.Y + 60), 0), params)
+						if hit then
+							inst:SetAttribute("FloorOffset", inst:GetPivot().Y - hit.Position.Y)
+						end
+					end
 					inst.Parent = folderFor(role)
 					table.insert(moved[role], inst.Name)
 				end
@@ -227,7 +236,25 @@ local function run(options)
 			print("    Wrong folder? Drag it to the other one in ServerStorage.CaveAssets and run this again.")
 		end
 
-		-- what to place. Models with the same name count as one design (your 6 Closets are
+		-- How high a model's pivot sat above the ground it stood on. Placing it at the same
+	-- height keeps it looking right even when a mesh sticks out of its part's box.
+	local function floorOffsetOf(asset, lo, hi)
+		local v = asset:GetAttribute("FloorOffset")
+		if type(v) == "number" then
+			return v
+		end
+		-- models an earlier version already moved here: they were standing on the Baseplate
+		local bp = workspace:FindFirstChild("Baseplate")
+		if bp and bp:IsA("BasePart") then
+			local top = bp.Position.Y + bp.Size.Y / 2
+			if hi.Y > top and lo.Y < top + 6 then
+				return asset:GetPivot().Y - top
+			end
+		end
+		return nil
+	end
+
+	-- what to place. Models with the same name count as one design (your 6 Closets are
 		-- 6 copies of a closet, not 6 designs x 3 copies each).
 		local jobs, skippedEmpty = {}, {}
 		local function collect(folder, hiding)
@@ -245,7 +272,7 @@ local function run(options)
 							groups[asset.Name] = {}
 							table.insert(order, asset.Name)
 						end
-						table.insert(groups[asset.Name], { asset = asset, footprint = footprintOf(asset), height = (hi - lo).Y })
+						table.insert(groups[asset.Name], { asset = asset, footprint = footprintOf(asset), height = (hi - lo).Y, offset = floorOffsetOf(asset, lo, hi) })
 					end
 				end
 			end
@@ -264,7 +291,7 @@ local function run(options)
 				end
 				for copy = 1, count do
 					local t = group[(copy - 1) % #group + 1]
-					table.insert(jobs, { asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, copy = copy })
+					table.insert(jobs, { asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, offset = t.offset, copy = copy })
 				end
 			end
 		end
@@ -301,10 +328,14 @@ local function run(options)
 		out.Name = "PlacedAssets"
 		out.Parent = cave
 
-		-- one copy of every model before any repeats; biggest first so they get the big spots
+		-- one copy of every model before any repeats, biggest first so they get the big spots.
+		-- Repeats of hiding models go before repeats of decoration.
 		table.sort(jobs, function(a, b)
 			if a.copy ~= b.copy then
 				return a.copy < b.copy
+			end
+			if a.copy > 1 and a.hiding ~= b.hiding then
+				return a.hiding
 			end
 			return a.footprint > b.footprint
 		end)
@@ -364,10 +395,15 @@ local function run(options)
 					local turn = wantYaw - yawOf(pivot.LookVector)
 					clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
 
-					-- then slide it so its bottom-center sits on the spot
+					-- then slide it over the spot, at the same height it stood at before
+					-- (or with the bottom of its box on the floor if we don't know that)
 					local lo, hi = bounds(clone)
 					local center = (lo + hi) / 2
-					clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, at.Y - lo.Y - 0.05, at.Z - center.Z))
+					local lift = at.Y - lo.Y - 0.05
+					if job.offset and lo.Y + job.offset > at.Y - 4 then
+						lift = job.offset
+					end
+					clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, lift, at.Z - center.Z))
 
 					if job.hiding then
 						lo, hi = bounds(clone)
