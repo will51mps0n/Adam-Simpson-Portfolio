@@ -161,13 +161,13 @@ local function addFlashlight(character)
 	mount.Position = Vector3.new(0, 0.2, -0.7)
 	mount.Parent = head
 
-	-- a focused beam (a bright spot where you point) with a faint wider halo round it, like a real flashlight
+	-- a bright beam where you point, with a softer wider halo round it
 	local beam = Instance.new("SpotLight")
 	beam.Name = "Beam"
 	beam.Face = Enum.NormalId.Front
-	beam.Angle = 24
-	beam.Range = 50
-	beam.Brightness = 4
+	beam.Angle = 40
+	beam.Range = 60
+	beam.Brightness = 6
 	beam.Color = LIGHT
 	beam.Shadows = true
 	beam.Parent = mount
@@ -175,12 +175,27 @@ local function addFlashlight(character)
 	local halo = Instance.new("SpotLight")
 	halo.Name = "Halo"
 	halo.Face = Enum.NormalId.Front
-	halo.Angle = 70
-	halo.Range = 24
-	halo.Brightness = 0.3
+	halo.Angle = 90
+	halo.Range = 40
+	halo.Brightness = 1.2
 	halo.Color = LIGHT
 	halo.Shadows = false
 	halo.Parent = mount
+
+	-- and the ground in front of you: this one always points down ahead of you, whichever way you look
+	local groundMount = Instance.new("Attachment")
+	groundMount.Name = "FlashlightGround"
+	groundMount.Position = Vector3.new(0, 0, -0.7)
+	groundMount.Parent = head
+	local ground = Instance.new("SpotLight")
+	ground.Name = "Ground"
+	ground.Face = Enum.NormalId.Front
+	ground.Angle = 80
+	ground.Range = 24
+	ground.Brightness = 2.5
+	ground.Color = LIGHT
+	ground.Shadows = false
+	ground.Parent = groundMount
 end
 
 -- the client's movement script reads these (sprinting and crouching happen on the client)
@@ -236,9 +251,11 @@ toggleLight.OnServerEvent:Connect(function(player)
 	local mount = head and head:FindFirstChild("Flashlight")
 	if mount and not player:GetAttribute("Hidden") then
 		local on = not mount.Beam.Enabled
-		for _, light in ipairs(mount:GetChildren()) do
-			if light:IsA("Light") then
-				light.Enabled = on
+		for _, holder in ipairs({ mount, head:FindFirstChild("FlashlightGround") }) do
+			for _, light in ipairs(holder:GetChildren()) do
+				if light:IsA("Light") then
+					light.Enabled = on
+				end
 			end
 		end
 		player:SetAttribute("FlashlightOn", on) -- the hotbar shows Light: ON / OFF
@@ -2895,6 +2912,14 @@ end)
 -- second so other players see your beam sweep around as well
 local aimRemote = ReplicatedStorage:WaitForChild("CaveHunt_Aim", 10)
 local lastSent, lastSentAt = Vector3.new(), 0
+local function aimGround(head, look) -- the ground light: 50 degrees down, the way you're facing
+	local groundMount = head:FindFirstChild("FlashlightGround")
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if groundMount and flat.Magnitude > 0.01 then
+		local dir = flat.Unit * 0.64 + Vector3.new(0, -0.77, 0)
+		groundMount.CFrame = CFrame.lookAt(groundMount.Position, groundMount.Position + dir)
+	end
+end
 RunService:BindToRenderStep("CaveHunt_FlashlightAim", Enum.RenderPriority.Camera.Value + 2, function(dt)
 	-- yours: exactly where the camera looks this frame
 	local head = player.Character and player.Character:FindFirstChild("Head")
@@ -2902,6 +2927,7 @@ RunService:BindToRenderStep("CaveHunt_FlashlightAim", Enum.RenderPriority.Camera
 	if mount then
 		local look = head.CFrame:VectorToObjectSpace(workspace.CurrentCamera.CFrame.LookVector)
 		mount.CFrame = CFrame.lookAt(mount.Position, mount.Position + look)
+		aimGround(head, look)
 		if aimRemote and os.clock() - lastSentAt > 0.1 and (look - lastSent).Magnitude > 0.05 then
 			lastSent, lastSentAt = look, os.clock()
 			aimRemote:FireServer(look)
@@ -2916,6 +2942,7 @@ RunService:BindToRenderStep("CaveHunt_FlashlightAim", Enum.RenderPriority.Camera
 			local current = otherMount.CFrame.LookVector
 			local look = current:Lerp(aim, math.min(1, dt * 12))
 			otherMount.CFrame = CFrame.lookAt(otherMount.Position, otherMount.Position + look)
+			aimGround(otherHead, look)
 		end
 	end
 end)
@@ -3003,7 +3030,7 @@ local function setCaveMood(on)
 		Lighting.Brightness = 0 -- the sun and moon would light the cave through the rock
 		Lighting.EnvironmentDiffuseScale = 0
 		Lighting.EnvironmentSpecularScale = 0
-		Lighting.ExposureCompensation = seeing and 0.6 or 0
+		Lighting.ExposureCompensation = seeing and 0.6 or (monster and 0 or 0.3)
 		Lighting.FogStart = 0
 		Lighting.FogEnd = 100000 -- no fog
 		if atmosphere then -- an Atmosphere glows like daylight haze even inside the cave: switch it off
@@ -3018,9 +3045,9 @@ local function setCaveMood(on)
 			atmosphere.Glare = 0
 			atmosphere.Haze = 0
 		end
-		grade.Contrast = seeing and 0.1 or 0.15
-		grade.Saturation = seeing and -1 or (monster and -0.7 or -0.4)
-		grade.Brightness = seeing and 0.1 or -0.05
+		grade.Contrast = seeing and 0.1 or 0.1
+		grade.Saturation = seeing and -1 or (monster and -0.7 or -0.3)
+		grade.Brightness = seeing and 0.1 or 0
 		grade.TintColor = seeing and Color3.fromRGB(150, 255, 160) or (monster and Color3.fromRGB(255, 200, 200) or Color3.fromRGB(222, 230, 255))
 		bloom.Intensity = seeing and 0.25 or 0.7
 		bloom.Threshold = seeing and 0.97 or 0.85

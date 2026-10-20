@@ -81,7 +81,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Name tags:** nobody's name shows over their head, because it would show through walls.
 - **Flashlight:** **F**, or the item in slot 1, switches it on and off. The slot says **Light: ON** or **Light: OFF**, and it stays that way until you switch it again. It starts on.
   - **Tracking:** the beam follows where you look, up and down too, with no lag on your own screen. Other players see it sweep around too.
-  - **Beam:** a focused beam that lights a bright spot where you point (up to 50 studs away), with a faint wider halo round it, like a real flashlight.
+  - **Beam:** a bright beam where you point (up to 60 studs), with a softer wider halo round it, plus a light that always shines on the ground just ahead of you.
   - **Glow:** while it's on, there's a faint glow at your feet that only you see. Other players don't see you glowing.
   - **Flashlight tools:** a flashlight Tool in StarterPack (like your Advanced Flashlight) is taken out of hiders' hotbars, because a held tool's beam can't follow where you look.
 - **Without a light:** the cave is very dark, but not pitch black. Rock and shapes are just visible (`CAVE_AMBIENT` at the top of `StarterPlayerScripts.CaveHunt_Client`).
