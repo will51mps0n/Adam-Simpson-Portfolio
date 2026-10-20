@@ -7,12 +7,22 @@ Two Studio scripts for an asymmetric hide-and-seek game: one player is the monst
 | `CaveBuilder.lua` | Carves the whole cave out of terrain and fills it with rooms, tunnels, hiding spots, lights, a spawn and monster spawns. |
 | `PlaceAssets.lua` | Takes **your** models from Workspace (shelves, container, big room, …) and puts copies on free spots around the cave. |
 
+## Quick start: one command does everything
+
+Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
+
+```lua
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/257dfed6891b706c53922a1b075e70b58dcd0ca4/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
+```
+
+It builds the cave, then moves your models from Workspace into it. The two steps are explained below, and each one also has its own command if you only want to run that step (for example to reshuffle your models).
+
 ## 1. Build the cave
 
 Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/57e59422176e590d751889ac97c1fc96d3d7732c/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/257dfed6891b706c53922a1b075e70b58dcd0ca4/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
 ```
 
 It downloads `CaveBuilder.lua` from GitHub and runs it. It also turns on **Allow HTTP Requests** for the place, which the download needs.
@@ -30,17 +40,17 @@ The cave sits **underground, around Y = -200, below your Baseplate**, so the map
 After the cave is built, run this in the Command Bar, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/57e59422176e590d751889ac97c1fc96d3d7732c/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/257dfed6891b706c53922a1b075e70b58dcd0ca4/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
 ```
 
-You don't need to set anything up first. **The first time it runs, it picks up the models already in your Workspace** and moves them into **ServerStorage → CaveAssets**, sorted by size:
+You don't need to set anything up first. **The first time it runs, it picks up the models already in your Workspace** (including ones inside folders) and moves them into **ServerStorage → CaveAssets**:
 
-- **Hiding**: at least 5 studs tall and no more than 30 studs across, like shelves or a container. The copies get the `HidingSpot` tag plus HidePoint/ExitPoint parts.
-- **Decor**: everything else, including your big room.
+- **Hiding**: names like Closet, Hiding Spot, Locker, Minecart, Crate, Shelf or Container, or anything in a folder named like that (such as "hiding spots"). Unnamed models (just "Model") go here if they're at least 5 studs tall and no more than 30 studs across. Copies get the `HidingSpot` tag plus HidePoint/ExitPoint parts.
+- **Decor**: names like Light, Crystal, Fire or Lamp, and everything else, including your big room.
 
 It leaves alone the Baseplate, SpawnLocations, flat parts, and anything with a Humanoid or "monster" in its name, so your monster stays put. The Output window lists where each model went.
 
-Then it puts copies in the cave: 3 of each hiding model, 2 of each decoration, and 1 of anything wider than 30 studs. The biggest go first, so your big room gets the roughly 90-stud open space in the Great Cavern.
+Then it puts them in the cave. One copy of every model goes in first, biggest first, so your big room gets the roughly 90-stud open space in the Great Cavern. Then extra copies go in while there's room: up to 3 of each hiding model, 2 of each decoration, and 1 of anything wider than 30 studs. Models with the same name count as one design, so 6 Closets means 6 closets in the cave, not 18. Small models can share a spot.
 
 - **Wrong folder?** Drag the model to the other folder in ServerStorage → CaveAssets and run the command again.
 - **New models later:** drag them straight into CaveAssets → Hiding or Decor and run it again. After the first run it no longer looks in Workspace, so your lobby is safe. To make it look in Workspace again, end the command with `require(M)({ COLLECT_FROM_WORKSPACE = true })`.
