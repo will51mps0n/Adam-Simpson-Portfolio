@@ -1,0 +1,2 @@
+-- Replaces Roblox's default health regeneration script with nothing.
+-- Block Horde regenerates health its own way (see PlayerHealth on the server).

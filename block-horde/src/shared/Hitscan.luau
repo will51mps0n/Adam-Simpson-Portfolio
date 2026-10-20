@@ -7,8 +7,8 @@ local Hitscan = {}
 
 -- Casts a ray from (ox, oz) along the unit direction (dx, dz), up to maxDist.
 -- circleOf(target) returns the target's x, z and radius.
--- Returns the targets hit in order (at most `pierce` of them) and how far the
--- bullet traveled before stopping.
+-- Returns the targets hit in order (at most `pierce` of them), how far the
+-- bullet traveled before stopping, and the distance to each hit.
 function Hitscan.cast<T>(
 	ox: number,
 	oz: number,
@@ -18,7 +18,7 @@ function Hitscan.cast<T>(
 	targets: { T },
 	circleOf: (T) -> (number, number, number),
 	pierce: number
-): ({ T }, number)
+): ({ T }, number, { number })
 	local candidates: { { target: T, dist: number } } = {}
 	for _, target in targets do
 		local cx, cz, radius = circleOf(target)
@@ -48,17 +48,19 @@ function Hitscan.cast<T>(
 	end)
 
 	local hits: { T } = {}
+	local dists: { number } = {}
 	local travel = maxDist
 	for i, candidate in candidates do
 		if i > pierce then
 			break
 		end
 		table.insert(hits, candidate.target)
+		table.insert(dists, candidate.dist)
 		if i == pierce then
 			travel = candidate.dist
 		end
 	end
-	return hits, travel
+	return hits, travel, dists
 end
 
 return Hitscan

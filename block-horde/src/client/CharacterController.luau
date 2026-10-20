@@ -58,16 +58,6 @@ local function setup(character: Model)
 	facing = flat(r.CFrame.LookVector) or Vector3.new(0, 0, -1)
 	a.CFrame = CFrame.lookAt(Vector3.zero, facing)
 	humanoid, root, align = h, r, a
-
-	-- Hide our own name tag; teammates still see it.
-	task.spawn(function()
-		local hero = character:WaitForChild("Hero", 10)
-		local head = hero and hero:WaitForChild("Head", 10)
-		local tag = head and head:WaitForChild("NameTag", 10)
-		if tag and tag:IsA("BillboardGui") then
-			tag.Enabled = false
-		end
-	end)
 end
 
 local function update()

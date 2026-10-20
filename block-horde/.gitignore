@@ -1,3 +1,4 @@
 sourcemap.json
+tests/.build/
 *.rbxl.lock
 *.rbxlx.lock

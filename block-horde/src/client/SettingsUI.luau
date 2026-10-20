@@ -8,9 +8,9 @@ local UI = require(script.Parent.UI)
 local SettingsUI = {}
 
 local HELP: { [string]: string } = {
-	Classic = "WASD / Arrows: move and aim\nSpace: fire\n1-9, 0: pick weapon    Q / E: cycle\nP: pause (solo only)",
-	Mouse = "WASD / Arrows: move\nMouse: aim    Click or Space: fire\n1-9, 0: pick weapon    Q / E: cycle\nP: pause (solo only)",
-	Touch = "Left thumb: move and aim\nFIRE: shoot    SWAP: next weapon",
+	Classic = "WASD / Arrows: move and aim\nSpace: fire    1-9, 0: pick weapon\nQ / E: cycle weapons    P: pause (solo)\nLobby: walk onto a pad to start a party",
+	Mouse = "WASD / Arrows: move    Mouse: aim\nClick or Space: fire    1-9, 0: weapon\nQ / E: cycle weapons    P: pause (solo)\nLobby: walk onto a pad to start a party",
+	Touch = "Left thumb: move and aim\nFIRE: shoot    SWAP: next weapon\nLobby: walk onto a pad to start a party",
 }
 
 function SettingsUI.start()

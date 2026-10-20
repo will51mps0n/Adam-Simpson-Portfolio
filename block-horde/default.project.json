@@ -3,10 +3,14 @@
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
-      "Shared": { "$path": "src/shared" }
+      "Shared": {
+        "$path": "src/shared"
+      }
     },
     "ServerScriptService": {
-      "Server": { "$path": "src/server" }
+      "Server": {
+        "$path": "src/server"
+      }
     },
     "StarterPlayer": {
       "$properties": {
@@ -19,11 +23,20 @@
         "DevTouchMovementMode": "Scriptable"
       },
       "StarterPlayerScripts": {
-        "Client": { "$path": "src/client" }
+        "Client": {
+          "$path": "src/client"
+        }
+      },
+      "StarterCharacterScripts": {
+        "Health": {
+          "$path": "src/character/Health.server.luau"
+        }
       }
     },
     "Players": {
-      "$properties": { "CharacterAutoLoads": false }
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
     },
     "Lighting": {
       "$properties": {
@@ -32,15 +45,25 @@
         "Brightness": 2.5,
         "ClockTime": 13.5,
         "GeographicLatitude": 20,
-        "Ambient": [0.45, 0.45, 0.47],
-        "OutdoorAmbient": [0.55, 0.55, 0.57],
+        "Ambient": [
+          0.45,
+          0.45,
+          0.47
+        ],
+        "OutdoorAmbient": [
+          0.55,
+          0.55,
+          0.57
+        ],
         "ShadowSoftness": 0.4,
         "FogStart": 0,
         "FogEnd": 100000
       }
     },
     "Workspace": {
-      "$properties": { "StreamingEnabled": false }
+      "$properties": {
+        "StreamingEnabled": false
+      }
     }
   }
 }

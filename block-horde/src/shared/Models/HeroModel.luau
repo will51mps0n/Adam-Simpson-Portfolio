@@ -1,6 +1,7 @@
 --!strict
--- The blocky hero: a big square head with dark hair, a box torso in the
--- player's shirt color, and both arms held forward around a small dark gun.
+-- The blocky hero: a big square head with dark hair and a red commando
+-- headband, a box torso in the player's shirt color, and both arms held
+-- forward around a small dark gun.
 -- Offsets are relative to the HumanoidRootPart, which sits about 3 studs above
 -- the floor and faces -Z. Legs ride on the avatar's own legs so they swing
 -- when walking.
@@ -35,6 +36,10 @@ function HeroModel.parts(shirt: Color3): { PartSpec }
 		{ name = "Head", size = Vector3.new(2.2, 2.2, 2.2), offset = CFrame.new(0, 1.8, 0), color = skin, attach = "Root" },
 		{ name = "Hair", size = Vector3.new(2.4, 0.5, 2.4), offset = CFrame.new(0, 3, 0.05), color = hair, attach = "Root" },
 		{ name = "HairBack", size = Vector3.new(2.4, 1.4, 0.4), offset = CFrame.new(0, 2.3, 1.05), color = hair, attach = "Root" },
+		-- Red commando headband with two tails hanging off the back
+		{ name = "Headband", size = Vector3.new(2.32, 0.36, 2.32), offset = CFrame.new(0, 2.4, 0), color = Config.HEADBAND_COLOR, attach = "Root" },
+		{ name = "BandTailL", size = Vector3.new(0.26, 0.26, 1), offset = CFrame.new(-0.25, 2.25, 1.55) * CFrame.Angles(math.rad(-25), math.rad(-12), 0), color = Config.HEADBAND_COLOR, attach = "Root" },
+		{ name = "BandTailR", size = Vector3.new(0.26, 0.26, 1), offset = CFrame.new(0.25, 2.2, 1.55) * CFrame.Angles(math.rad(-35), math.rad(12), 0), color = Config.HEADBAND_COLOR, attach = "Root" },
 		{ name = "LeftEye", size = Vector3.new(0.32, 0.42, 0.1), offset = CFrame.new(-0.45, 1.95, -1.12), color = EYE_COLOR, attach = "Root" },
 		{ name = "RightEye", size = Vector3.new(0.32, 0.42, 0.1), offset = CFrame.new(0.45, 1.95, -1.12), color = EYE_COLOR, attach = "Root" },
 		-- Arms held forward, hands meeting at the gun

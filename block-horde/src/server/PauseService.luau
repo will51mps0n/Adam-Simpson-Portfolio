@@ -1,37 +1,45 @@
 --!strict
--- P pauses the game, but only when one player is on the server.
--- The paused state is a workspace attribute so every client can see it.
+-- P pauses the run, but only when one player is on the server. The paused
+-- state is a workspace attribute so the client can show the overlay.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Net = require(ReplicatedStorage.Shared.Net)
+local RunState = require(script.Parent.RunState)
 
 local PauseService = {}
 
-local paused = false
+local pausedAt = 0
 
-local function setPaused(value: boolean)
-	paused = value
-	workspace:SetAttribute("Paused", value)
-end
-
-function PauseService.isPaused(): boolean
-	return paused
+function PauseService.set(paused: boolean)
+	if paused == RunState.paused then
+		return
+	end
+	RunState.paused = paused
+	workspace:SetAttribute("Paused", paused)
+	if paused then
+		pausedAt = workspace:GetServerTimeNow()
+		RunState.PausedChanged:Fire(true, 0)
+	else
+		RunState.PausedChanged:Fire(false, workspace:GetServerTimeNow() - pausedAt)
+	end
 end
 
 function PauseService.start()
-	setPaused(false)
-	Net.event("PauseRequest").OnServerEvent:Connect(function()
-		if #Players:GetPlayers() == 1 then
-			setPaused(not paused)
+	workspace:SetAttribute("Paused", false)
+	Net.event("PauseRequest").OnServerEvent:Connect(function(player: Player)
+		local allowed = RunState.active
+			and RunState.phase ~= "Over"
+			and RunState.isParticipant(player)
+			and #Players:GetPlayers() == 1
+		if allowed or RunState.paused then
+			PauseService.set(not RunState.paused)
 		end
 	end)
 	-- Someone joining always unpauses.
 	Players.PlayerAdded:Connect(function()
-		if paused then
-			setPaused(false)
-		end
+		PauseService.set(false)
 	end)
 end
 
