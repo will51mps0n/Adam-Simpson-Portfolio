@@ -111,6 +111,7 @@ local function run(options)
 
 		-- widest the model can be at any rotation (the diagonal of its tightest box
 		-- seen from above). Measured per model so a rotated model isn't over-sized.
+		-- Also returns that box's length and depth and the direction of its long side.
 		local function footprintOf(inst)
 			local corners = {}
 			for _, p in ipairs(partsOf(inst)) do
@@ -123,7 +124,7 @@ local function run(options)
 					end
 				end
 			end
-			local best = math.huge
+			local best, length, depth, axis = math.huge, 0, 0, Vector3.new(1, 0, 0)
 			for step = 0, 11 do
 				local a = step * math.pi / 12
 				local ca, sa = math.cos(a), math.sin(a)
@@ -132,9 +133,14 @@ local function run(options)
 					local x, z = c.X * ca - c.Z * sa, c.X * sa + c.Z * ca
 					x0, x1, z0, z1 = math.min(x0, x), math.max(x1, x), math.min(z0, z), math.max(z1, z)
 				end
-				best = math.min(best, math.sqrt((x1 - x0) ^ 2 + (z1 - z0) ^ 2))
+				local diagonal = math.sqrt((x1 - x0) ^ 2 + (z1 - z0) ^ 2)
+				if diagonal < best then
+					best = diagonal
+					length, depth = math.max(x1 - x0, z1 - z0), math.min(x1 - x0, z1 - z0)
+					axis = (x1 - x0 >= z1 - z0) and Vector3.new(ca, 0, -sa) or Vector3.new(sa, 0, ca)
+				end
 			end
-			return best
+			return best, length, depth, axis
 		end
 
 		local function yawOf(look) -- heading angle of a look vector
@@ -275,7 +281,16 @@ local function run(options)
 							groups[asset.Name] = {}
 							table.insert(order, asset.Name)
 						end
-						table.insert(groups[asset.Name], { asset = asset, footprint = footprintOf(asset), height = (hi - lo).Y, offset = floorOffsetOf(asset) })
+						local footprint, length, depth, axis = footprintOf(asset)
+						-- the long side's front: the side the model's own front (its pivot) is on
+						local front = Vector3.new(-axis.Z, 0, axis.X)
+						if front:Dot(asset:GetPivot().LookVector) < 0 then
+							front = -front
+						end
+						table.insert(groups[asset.Name], {
+							asset = asset, footprint = footprint, height = (hi - lo).Y, offset = floorOffsetOf(asset),
+							long = length >= 8 and length >= depth * 2, length = length, depth = depth, front = front,
+						})
 					end
 				end
 			end
@@ -295,7 +310,11 @@ local function run(options)
 				for copy = 1, count do
 					local t = group[(copy - 1) % #group + 1]
 					-- "copy" = how many times this particular model has come up, so every model gets its first one in
-					table.insert(jobs, { asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, offset = t.offset, copy = math.floor((copy - 1) / #group) + 1 })
+					table.insert(jobs, {
+						asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, offset = t.offset,
+						long = t.long, length = t.length, depth = t.depth, front = t.front,
+						copy = math.floor((copy - 1) / #group) + 1,
+					})
 				end
 			end
 		end
@@ -309,9 +328,22 @@ local function run(options)
 		end
 
 		-- where it can go
-		local spots, biggest = {}, 0
+		local spots, strips, biggest = {}, {}, 0
 		for _, s in ipairs(spotFolder:GetChildren()) do
-			if s:IsA("BasePart") then
+			if s:IsA("BasePart") and s:GetAttribute("SpotSize") == "Wall" then
+				-- a strip of floor along a wall, for long models (shelf rows): they stand in a line, backs to the rock
+				local floor = s.CFrame * CFrame.new(0, -s.Size.Y / 2, 0)
+				local look = floor.LookVector
+				table.insert(strips, {
+					pos = floor.Position,
+					look = look, -- toward the middle of the room
+					along = Vector3.new(-look.Z, 0, look.X),
+					length = s:GetAttribute("MaxLength") or 20,
+					depth = s:GetAttribute("MaxDepth") or 6,
+					height = s:GetAttribute("MaxHeight") or 14,
+					used = 0,
+				})
+			elseif s:IsA("BasePart") then
 				local floor = s.CFrame * CFrame.new(0, -s.Size.Y / 2, 0)
 				local spot = {
 					pos = floor.Position,
@@ -345,6 +377,7 @@ local function run(options)
 		end)
 
 		local placed, failed, errors, placedAsset = {}, {}, {}, {}
+		local againstWall = 0
 		for _, job in ipairs(jobs) do
 			local ok, err = pcall(function()
 				-- free spots it fits in, preferring snug ones so the big spots stay free for big models
@@ -361,14 +394,29 @@ local function run(options)
 						table.insert(choices, s)
 					end
 				end
-				if #choices == 0 then
+				-- long models (shelf rows) go along a wall if there's room on a strip
+				local strip
+				if job.long then
+					for _, st in ipairs(strips) do
+						if st.length - st.used >= job.length and job.depth <= st.depth and job.height <= st.height then
+							strip = st
+							break
+						end
+					end
+				end
+				if #choices == 0 and not strip then
 					failed[job.name] = failed[job.name] or { job = job, n = 0 }
 					failed[job.name].n += 1
 				else
-					local spot = choices[rng:NextInteger(1, #choices)]
+					local spot = strip or choices[rng:NextInteger(1, #choices)]
 					local at, look = spot.pos, spot.look
 					local middle, tucked = spot.pos, nil
-					if spot.footprint >= job.footprint * 2 then
+					if strip then
+						-- next free stretch of the strip, pushed back against the rock
+						at = strip.pos + strip.along * (-strip.length / 2 + strip.used + job.length / 2) - strip.look * ((strip.depth - job.depth) / 2)
+						strip.used += job.length + 1
+						againstWall += 1
+					elseif spot.footprint >= job.footprint * 2 then
 						-- small model in a big spot: tuck it against the wall side of the spot and
 						-- keep the rest of the spot free for more models
 						local a = rng:NextNumber(-0.9, 0.9)
@@ -401,9 +449,11 @@ local function run(options)
 
 					-- turn it (around world Y only, so it stays upright) so its front faces the
 					-- middle of the room for hiding props, or a random way for decor
+					-- (along a wall: its long side against the rock and its front facing the room)
 					local pivot = clone:GetPivot()
-					local wantYaw = job.hiding and yawOf(look) or rng:NextNumber(0, math.pi * 2)
-					local turn = CFrame.Angles(0, wantYaw - yawOf(pivot.LookVector), 0) * pivot.Rotation
+					local wantYaw = (job.hiding or strip) and yawOf(look) or rng:NextNumber(0, math.pi * 2)
+					local front = strip and job.front or pivot.LookVector
+					local turn = CFrame.Angles(0, wantYaw - yawOf(front), 0) * pivot.Rotation
 
 					-- then slide it over the spot and find the highest bit of floor under it.
 					-- `flat` is false if the floor under it rises or drops more than a stud
@@ -498,6 +548,9 @@ local function run(options)
 		end
 		table.sort(names)
 		print(("[PlaceAssets] Put %d of your models in the cave: %s"):format(total, table.concat(names, ", ")))
+		if againstWall > 0 then
+			print(("[PlaceAssets] %d long models (like shelf rows) stand along the walls."):format(againstWall))
+		end
 		local skipped = 0
 		for _, f in pairs(failed) do
 			skipped += f.n

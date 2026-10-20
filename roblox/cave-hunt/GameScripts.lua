@@ -66,7 +66,8 @@ local ROAR_COOLDOWN = 25
 local ROAR_RANGE = 140
 -- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
 local ROAR_SOUND = "rbxasset://sounds/uuhhh.mp3"
-local PUNCH_SOUND = "rbxasset://sounds/swoosh.wav"
+local PUNCH_SOUND = "rbxasset://sounds/action_jump.mp3" -- (the old built-in swoosh.wav is blocked by Roblox now)
+local HIT_SOUND = "rbxasset://sounds/action_jump_land.mp3"
 
 local function remote(name)
 	local r = ReplicatedStorage:FindFirstChild(name)
@@ -278,23 +279,90 @@ end
 ------------------------------------------------------------------ the monster's punch
 -- the monster has to hit a hider (click, R2, or the Hit button) to catch them: the closest one in
 -- front of it, within reach, that isn't hiding, and not through a wall
+local TweenService = game:GetService("TweenService")
+
+-- swing the monster's right arm by turning its shoulder joint, so it works on any rig (no animation needed)
+local function armJoint(character)
+	local named = character:FindFirstChild("RightShoulder", true) or character:FindFirstChild("Right Shoulder", true)
+	if named and named:IsA("Motor6D") then
+		return named
+	end
+	for _, pass in ipairs({ "right", "" }) do -- a custom rig: a joint that moves a (right) arm or hand
+		for _, d in ipairs(character:GetDescendants()) do
+			local n = d:IsA("Motor6D") and d.Part1 and d.Part1.Name:lower() or ""
+			if n:find(pass, 1, true) and (n:find("arm") or n:find("hand")) then
+				return d
+			end
+		end
+	end
+	return nil
+end
+
+local function swingArm(character)
+	local joint = armJoint(character)
+	if not joint or joint:GetAttribute("Swinging") then
+		return
+	end
+	joint:SetAttribute("Swinging", true)
+	local rest = joint.C0
+	-- an R6 shoulder turns about its Z axis, everything else about X
+	local raised = joint.Name == "Right Shoulder" and rest * CFrame.Angles(0, 0, math.rad(100)) or rest * CFrame.Angles(math.rad(100), 0, 0)
+	TweenService:Create(joint, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { C0 = raised }):Play()
+	task.delay(0.15, function()
+		TweenService:Create(joint, TweenInfo.new(0.25), { C0 = rest }):Play()
+		task.wait(0.3)
+		joint:SetAttribute("Swinging", nil)
+	end)
+end
+
+-- three red claw marks flash in front of the monster, so everyone sees the swing
+local function clawMarks(root, reach, look)
+	local base = CFrame.lookAt(root.Position, root.Position + look) * CFrame.new(0, 0.5, -reach * 0.55)
+	for i = -1, 1 do
+		local claw = Instance.new("Part")
+		claw.Name = "MonsterClaw"
+		claw.Anchored = true
+		claw.CanCollide = false
+		claw.CanQuery = false
+		claw.CanTouch = false
+		claw.CastShadow = false
+		claw.Material = Enum.Material.Neon
+		claw.Color = Color3.fromRGB(255, 60, 50)
+		claw.Transparency = 0.3
+		claw.Size = Vector3.new(reach * 0.8, 0.15, 0.15)
+		claw.CFrame = base * CFrame.new(0, i * 0.7, 0) * CFrame.Angles(0, 0, math.rad(35))
+		claw.Parent = workspace
+		TweenService:Create(claw, TweenInfo.new(0.3), { Transparency = 1 }):Play()
+		Debris:AddItem(claw, 0.35)
+	end
+end
+
+local function playSound(parent, id, speed, volume)
+	local s = Instance.new("Sound")
+	s.SoundId = id
+	s.PlaybackSpeed = speed
+	s.Volume = volume
+	s.RollOffMaxDistance = 120
+	s.Parent = parent
+	s:Play()
+	Debris:AddItem(s, 3)
+end
+
 local lastPunch = {}
-punchRemote.OnServerEvent:Connect(function(player)
+punchRemote.OnServerEvent:Connect(function(player, animated)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if player:GetAttribute("Role") ~= "Monster" or not root or os.clock() - (lastPunch[player] or -math.huge) < PUNCH_COOLDOWN * 0.8 then
 		return
 	end
 	lastPunch[player] = os.clock()
-	local swing = Instance.new("Sound")
-	swing.SoundId = PUNCH_SOUND
-	swing.PlaybackSpeed = 0.7
-	swing.Volume = 1.5
-	swing.Parent = root
-	swing:Play()
-	Debris:AddItem(swing, 2)
 	local reach = character:GetAttribute("Reach") or 8
 	local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z).Unit
+	playSound(root, PUNCH_SOUND, 0.6, 1.5)
+	if animated ~= true then -- (your own punch animation, if you set one, already moves the arm)
+		swingArm(character)
+	end
+	clawMarks(root, reach, look)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local best, bestDistance
@@ -317,6 +385,7 @@ punchRemote.OnServerEvent:Connect(function(player)
 	end
 	if best then
 		local humanoid = best.Character:FindFirstChildOfClass("Humanoid")
+		playSound(best.Character.HumanoidRootPart, HIT_SOUND, 0.5, 2)
 		humanoid.Health = 0
 		local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
 		if reward then
@@ -440,6 +509,9 @@ local function becomeMonster(player)
 				animate:Clone().Parent = body
 			end
 			sizeToMonster(body)
+			if not templateHumanoid:FindFirstChildOfClass("Animator") then
+				Instance.new("Animator").Parent = body:FindFirstChildOfClass("Humanoid") -- so its walk/run (and punch) animations show for everyone
+			end
 			body.Name = player.Name
 			body:PivotTo(spawnAt or character:GetPivot())
 			player.Character = body
@@ -755,7 +827,7 @@ local PHONE_COOLDOWN = 8
 -- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
 local RINGTONE = "rbxasset://sounds/electronicpingshort.wav"
 local AIRHORN_SOUND = "rbxasset://sounds/electronicpingshort.wav"
-local SLIP_SOUND = "rbxasset://sounds/swoosh.wav"
+local SLIP_SOUND = "rbxasset://sounds/action_jump_land.mp3"
 
 local function remote(name, className)
 	local r = ReplicatedStorage:FindFirstChild(name)
@@ -2023,8 +2095,9 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 -- The monster's punch: click (R2 on a gamepad, the Hit button on a phone). The server decides
--- who gets hit: the closest hider in front of the monster, within reach, not through a wall.
-local PUNCH_ANIMATIONS = { R15 = "rbxassetid://522635514", R6 = "rbxassetid://129967390" } -- Roblox's own sword slash
+-- who gets hit: the closest hider in front of the monster, within reach, not through a wall, and
+-- swings the monster's arm. A punch animation you made plays instead of that swing:
+local PUNCH_ANIMATION = "" -- e.g. "rbxassetid://1234567" (Roblox only plays animations you own)
 task.spawn(function()
 	local punch = ReplicatedStorage:WaitForChild("CaveHunt_Punch", 30)
 	if not punch then
@@ -2036,17 +2109,19 @@ task.spawn(function()
 			return
 		end
 		readyAt = os.clock() + 1
-		punch:FireServer()
 		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-		if animator then
+		local animated = false
+		if animator and PUNCH_ANIMATION ~= "" then
 			local animation = Instance.new("Animation")
-			animation.AnimationId = PUNCH_ANIMATIONS[humanoid.RigType == Enum.HumanoidRigType.R6 and "R6" or "R15"]
+			animation.AnimationId = PUNCH_ANIMATION
 			local ok, track = pcall(animator.LoadAnimation, animator, animation)
 			if ok and track then
-				track:Play(0.05, 1, 1.4)
+				track:Play(0.05)
+				animated = true
 			end
 		end
+		punch:FireServer(animated)
 	end
 	local bound = false
 	local function update()

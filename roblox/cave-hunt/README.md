@@ -77,6 +77,8 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Size:** 10 studs tall, twice a hider (`MONSTER_HEIGHT`). It fits through every tunnel and nook, but not the shack doors (7.5 studs) or doors in your own buildings that are sized for normal players. It can still punch through a doorway and search hiding spots through walls.
 - **Speed:** walks at 20 and sprints at 30, against the hiders' 16 and 24. It has more stamina than a hider.
 - **Punching:** **click** (R2 on a gamepad, the Hit button on a phone). It hits the closest hider in front of it, within reach (bigger monsters reach further), never through a wall. One punch catches them. Once a second.
+  - **What it looks like:** the monster's arm swings up by turning its shoulder joint. That works on any rig, with no animation file needed. Three red claw marks flash in front of it, with a swing sound and a thud on a hit.
+  - **Your own punch animation:** if you make one in the Animation Editor, put its ID in `PUNCH_ANIMATION` at the top of `StarterPlayerScripts.CaveHunt_Client`. It plays instead of the shoulder swing.
 - **Camera:** stays pulled back far enough to always show the monster's body.
 - **Searching:** pressing **E** ("Search") on a hiding spot throws whoever is inside out.
 - **Vision:** no flashlight. Instead it has bright green night vision that shows the whole cave, plus a light around the monster that only the monster sees. **N** switches it off and on (off is a dim red view).
@@ -146,6 +148,7 @@ Except for Snitch and Fake Noise, items can't be used while you're hiding.
 **Sounds:** everything uses sounds built into Roblox. To use your own, change these to any sound ID, e.g. `"rbxassetid://1234567"`:
 - `ROAR_SOUND` and `PUNCH_SOUND` at the top of `ServerScriptService.CaveHunt_Players`.
 - `RINGTONE`, `AIRHORN_SOUND` and `SLIP_SOUND` at the top of `ServerScriptService.CaveHunt_Shop`.
+- **Blocked built-in sounds:** Roblox has started blocking some old built-in sounds (`swoosh.wav` gives "Asset is not approved for the requester"). The punch now uses the jump and landing sounds that every character uses. If the phone or air horn shows that error too, tell Claude.
 
 The air horn is a built-in beep played low and loud, so it's the one most worth swapping for a real horn sound.
 
@@ -167,7 +170,9 @@ The cave is a block of rock (720 × 200 × 720 studs) in the middle of your Base
 - **Tunnels and nooks:** dead-end alcoves off the tunnels.
 - **Monster spawns:** at the far ends of the Great Cavern, Old Mine and Crystal Grotto, marked by a dim red glow.
 
-**Room for your props:** there are about 65 spots in the rooms, along the tunnels and in the nooks.
+**Room for your props:** there are about 60 spots in the rooms, along the tunnels and in the nooks, plus about 8 **wall strips**.
+- **Flat floor only:** every spot, and everything the builder puts down itself (tents, signs, lanterns), is checked with rays for flat floor, so nothing stands on the slope where the floor curves up into the wall.
+- **Wall strips:** long stretches of floor against the rock for long models like shelf rows. Their backs go to the wall and their fronts face the room.
 - **Tunnel spots** are sized to the real width of the tunnel at that point, measured up to head height, so nothing pokes into a wall that curves in.
 - **Small props tucked against a wall:** if one lands where the floor starts sloping up to the wall, it's slid back toward open floor.
 
@@ -187,6 +192,7 @@ The first time `PlaceAssets` runs, it picks up the models in your Workspace (inc
 After that first run it only uses CaveAssets. To add more props, drag them into **CaveAssets → Hiding** or **Decor**.
 
 **How they're placed:**
+- **Long models** (at least twice as long as they are deep, like shelf rows) go along the walls on the wall strips first.
 - **Every model goes in at least once, biggest first.** Then extra copies go in while there's room: up to 6 of each hiding model, 4 of each decoration, and 1 of anything wider than 30 studs. Small props can share a spot.
 - **Height:** each model's *visible* bottom rests on the highest point of the floor under it, so nothing sinks into the floor. Invisible helper parts (hitboxes and the like) are ignored when working this out.
 - **Lights:** lights inside your models are dimmed to 35% to keep the cave dark (`ASSET_LIGHT_SCALE`).

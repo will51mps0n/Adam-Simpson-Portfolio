@@ -1062,6 +1062,29 @@ local function run(options)
 			return c
 		end
 
+		-- Only flat floor: near the walls the floor curves up into the rock, and anything stood
+		-- there sinks into the slope. Rays straight down find the real floor height.
+		local function floorAt(x, z, aroundY) -- cave-local floor height there (nil if rock is right above it)
+			local ok, hit = pcall(function()
+				return workspace:Raycast(W(Vector3.new(x, aroundY + 5, z)), Vector3.new(0, -12, 0), rayParams)
+			end)
+			return ok and hit and hit.Position.Y - O.Y or nil
+		end
+		local function isFlat(room, p, radius)
+			local middle = floorAt(p.X, p.Z, room.pos.Y)
+			if not middle or math.abs(middle - room.pos.Y) > 1.5 then
+				return false
+			end
+			for i = 0, 7 do
+				local a = i * math.pi / 4
+				local y = floorAt(p.X + math.cos(a) * radius, p.Z + math.sin(a) * radius, room.pos.Y)
+				if not y or math.abs(y - middle) > 0.75 then
+					return false
+				end
+			end
+			return true
+		end
+
 		local function findSpot(room, need, opts)
 			opts = opts or {}
 			local lo, hi = opts.rhoMin or 0, opts.rhoMax or 0.92
@@ -1071,7 +1094,7 @@ local function run(options)
 				local rr = math.sqrt(rand(lo * lo, hi * hi))
 				local p = flat(room.pos) + Vector3.new(math.cos(a) * room.rx * rr, 0, math.sin(a) * room.rz * rr)
 				local c = clearance(room, p)
-				if c >= need then
+				if c >= need and (opts.anyFloor or isFlat(room, p, math.min(c, need) * 0.85)) then
 					if not opts.best then
 						return p, c
 					end
@@ -1108,14 +1131,14 @@ local function run(options)
 		end
 
 		-- How far the rock is from p (on the floor at height floorY) going along dir:
-		-- sideways rays at knee, waist and head height (and halfWidth to each side), so
+		-- sideways rays from ankle to head height (and halfWidth to each side), so
 		-- something that fits this gap doesn't poke into a wall that curves in higher up.
 		local function wallGap(floorY, p, dir, halfWidth)
 			local base = snapY(W(Vector3.new(p.X, floorY, p.Z)))
 			local side = Vector3.new(-dir.Z, 0, dir.X) * halfWidth
 			local gap = math.huge
 			for s = -1, 1 do
-				for _, y in ipairs({ 1, 4, 7, 9 }) do
+				for _, y in ipairs({ 0.5, 2, 4, 7, 9 }) do
 					local from = base + side * s + Vector3.new(0, y, 0)
 					local ok, hit = pcall(function()
 						return workspace:Raycast(from, dir * 60, rayParams)
@@ -1162,7 +1185,7 @@ local function run(options)
 					end
 					for i = 1, ok and count or 0 do
 						-- each one is pushed back on its own, so the bank follows the curve of the wall
-						local p = spots[i] + dir * ((gaps[i] or 0) - DEPTH / 2 - 0.3) -- back panel just off the rock
+						local p = spots[i] + dir * ((gaps[i] or 0) - DEPTH / 2 - 0.5) -- back panel just off the rock
 						local d = p - center
 						local rho = math.sqrt((d.X / room.rx) ^ 2 + (d.Z / room.rz) ^ 2)
 						if rho < 0.55 or rho > 1 or not free(room, p, 2) or not free(room, p - dir * 3.5, 2) then
@@ -1207,7 +1230,7 @@ local function run(options)
 		local function addBoulders(room, n, rMin, rMax)
 			for _ = 1, n do
 				local r = rand(rMin, rMax)
-				tryPlace(room, r + 3, { reserve = r + 1 }, function(p)
+				tryPlace(room, r + 3, { reserve = r + 1, anyFloor = true }, function(p)
 					Terrain:FillBall(W(Vector3.new(p.X, room.pos.Y + r * 0.2, p.Z)), r, room.wall)
 				end)
 			end
@@ -1215,7 +1238,7 @@ local function run(options)
 
 		local function addStalagmites(room, n)
 			for _ = 1, n do
-				tryPlace(room, 5.5, {}, function(p)
+				tryPlace(room, 5.5, { anyFloor = true }, function(p)
 					local s = rand(0.8, 1.25)
 					for _, seg in ipairs({ { 1, 4 }, { 4.5, 3 }, { 7.5, 2.2 } }) do
 						Terrain:FillBall(W(Vector3.new(p.X + rand(-0.4, 0.4), room.pos.Y + seg[1] * s, p.Z + rand(-0.4, 0.4))), seg[2] * s, room.wall)
@@ -1227,7 +1250,7 @@ local function run(options)
 		local function addPillars(room, n, rMin, rMax)
 			for _ = 1, n do
 				local r = rand(rMin, rMax)
-				tryPlace(room, r * 1.5 + 6, { rhoMax = 0.75, reserve = r * 1.5 + 1 }, function(p)
+				tryPlace(room, r * 1.5 + 6, { rhoMax = 0.75, reserve = r * 1.5 + 1, anyFloor = true }, function(p)
 					local height = room.h + 30
 					Terrain:FillCylinder(CFrame.new(W(Vector3.new(p.X, room.pos.Y - 4 + height / 2, p.Z))), height, r, room.wall)
 					Terrain:FillBall(W(Vector3.new(p.X, room.pos.Y, p.Z)), r * 1.5, room.wall)
@@ -1235,8 +1258,11 @@ local function run(options)
 			end
 		end
 
-		local function makePropSpot(room, p, footprint, height, sizeClass, faceTo)
+		local function makePropSpot(room, p, footprint, height, sizeClass, faceTo, extra)
 			local s = marker(F.propSpots, sizeClass .. "PropSpot", placeAt(room, p, faceTo) * CFrame.new(0, 0.1, 0), Vector3.new(4, 0.2, 4))
+			for k, v in pairs(extra or {}) do
+				s:SetAttribute(k, v)
+			end
 			s:SetAttribute("SpotSize", sizeClass)
 			s:SetAttribute("MaxFootprint", math.floor(footprint))
 			s:SetAttribute("MaxHeight", math.floor(height))
@@ -1244,6 +1270,52 @@ local function run(options)
 			CollectionService:AddTag(s, "PropSpot")
 			stats.props += 1
 			return s
+		end
+
+		-- Long strips of flat floor against the wall for your long models (shelf rows, containers):
+		-- PlaceAssets stands them there with their backs to the rock.
+		local function addWallStrips(room, n, length, depth)
+			local center = flat(room.pos)
+			for _ = 1, n do
+				for _ = 1, 40 do
+					local dir = randDir()
+					local along = Vector3.new(-dir.Z, 0, dir.X)
+					local reach = 1 / math.sqrt((dir.X / room.rx) ^ 2 + (dir.Z / room.rz) ^ 2)
+					local start = center + dir * reach * 0.4
+					local gap = math.huge
+					for t = -0.5, 0.5, 0.25 do
+						gap = math.min(gap, wallGap(room.pos.Y, start + along * (t * length), dir, 0.5) or -1)
+					end
+					local middle = start + dir * (gap - depth / 2 - 0.4)
+					local d = middle - center
+					local rho = math.sqrt((d.X / room.rx) ^ 2 + (d.Z / room.rz) ^ 2)
+					local ok = gap > 0 and rho > 0.5 and rho < 1
+					local points = {}
+					for t = -0.5, 0.5, 4 / length do
+						table.insert(points, middle + along * (t * length))
+					end
+					for _, q in ipairs(points) do
+						if not ok then
+							break
+						end
+						ok = isFlat(room, q, depth / 2)
+						for _, e in ipairs(room.entrances) do
+							ok = ok and segDist(q, center, e) >= LANE_HALF + depth / 2
+						end
+						for _, b in ipairs(room.blocks) do
+							ok = ok and (q - b.p).Magnitude >= b.r + depth / 2
+						end
+					end
+					if ok then
+						for _, q in ipairs(points) do
+							reserve(room, q, depth / 2 + 0.5)
+							reserve(room, q - dir * (depth / 2 + 3), 2) -- room to walk along it
+						end
+						makePropSpot(room, middle, depth, 14, "Wall", middle - dir, { MaxLength = math.floor(length), MaxDepth = depth })
+						break
+					end
+				end
+			end
 		end
 
 		-- A big open area for a big asset (like your big room). It ignores the walking
@@ -1585,6 +1657,7 @@ local function run(options)
 			end)
 			addLanterns(room, 4, { full = true })
 			addLockerBank(room, 3)
+			addWallStrips(room, 1, 20, 6)
 			addPropSpots(room, 6)
 			addClutter(room, 2)
 		end
@@ -1603,6 +1676,7 @@ local function run(options)
 			for _, n in ipairs({ 3, 3, 2, 2 }) do
 				addLockerBank(room, n)
 			end
+			addWallStrips(room, 4, 28, 7)
 			addPillars(room, 3, 6, 9)
 			addBarricades(room, 4)
 			addPropSpots(room, 22)
@@ -1628,6 +1702,7 @@ local function run(options)
 			for _, n in ipairs({ 3, 3, 2 }) do -- the miners' lockers
 				addLockerBank(room, n)
 			end
+			addWallStrips(room, 3, 24, 6)
 			for _ = 1, 5 do
 				tryPlace(room, 6.5, { rhoMin = 0.68, rhoMax = 0.86 }, function(p)
 					buildMineSupport(placeAt(room, p))
@@ -1647,6 +1722,7 @@ local function run(options)
 			end
 			addLockerBank(room, 2)
 			addLockerBank(room, 2)
+			addWallStrips(room, 3, 24, 6)
 			addBarricades(room, 1)
 			addPropSpots(room, 12)
 			for _ = 1, 8 do
