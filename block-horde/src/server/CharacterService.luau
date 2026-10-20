@@ -222,6 +222,12 @@ function CharacterService.setSlot(player: Player, slot: number)
 	end
 end
 
+-- Gives a player the lowest free slot again (after a run handed out party slots).
+function CharacterService.reassignSlot(player: Player)
+	slots[player] = nil
+	CharacterService.setSlot(player, takeFreeSlot())
+end
+
 -- Puts the player at `cframe` with full health, spawning a new character if
 -- they have none or are dead. Yields until done.
 function CharacterService.spawnAt(player: Player, cframe: CFrame)

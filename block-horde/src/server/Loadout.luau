@@ -81,6 +81,14 @@ function Loadout.useAmmo(player: Player, weaponId: string): boolean
 	return true
 end
 
+-- Asks for a resync, e.g. after the server turned down a shot the client already counted.
+function Loadout.markDirty(player: Player)
+	local state = states[player]
+	if state then
+		state.dirty = true
+	end
+end
+
 -- Gives back a shot that could not be used (e.g. nowhere to place a barrel).
 function Loadout.refund(player: Player, weaponId: string)
 	local state = states[player]

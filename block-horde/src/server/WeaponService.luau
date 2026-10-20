@@ -109,6 +109,7 @@ local function onFire(player: Player, weaponId: unknown, dirX: unknown, dirZ: un
 	end
 	local allowedAt = times[weaponId] or 0
 	if now < allowedAt - stats.fireInterval * 0.5 then
+		Loadout.markDirty(player)
 		return
 	end
 	times[weaponId] = math.max(allowedAt, now) + stats.fireInterval

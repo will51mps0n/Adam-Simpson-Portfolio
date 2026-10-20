@@ -15,7 +15,14 @@ local RunManager = require(script.Parent.RunManager)
 
 local Announce = Net.event("Announce")
 
+type Pending = { kind: string, options: TeleportOptions?, attempts: number }
+
 local Teleporter = {}
+
+local MAX_ATTEMPTS = 4
+-- Players whose teleport was accepted; most failures only show up later through
+-- TeleportInitFailed, so this remembers how to try them again.
+local pending: { [Player]: Pending } = {}
 
 -- Where players go when a run in this server ends. Set by Main.
 Teleporter.homeSpawn = function(_player: Player): CFrame?
@@ -36,9 +43,12 @@ end
 function Teleporter.playHere(players: { Player }, roomId: string, difficulty: string)
 	local started = RunManager.begin(players, roomId, difficulty, function(finished: { Player })
 		for _, player in finished do
-			local home = Teleporter.homeSpawn(player)
-			if player.Parent and home then
-				task.spawn(CharacterService.spawnAt, player, home)
+			if player.Parent then
+				CharacterService.reassignSlot(player)
+				local home = Teleporter.homeSpawn(player)
+				if home then
+					task.spawn(CharacterService.spawnAt, player, home)
+				end
 			end
 		end
 	end)
@@ -68,13 +78,20 @@ function Teleporter.launch(players: { Player }, roomId: string, difficulty: stri
 			if #group == 0 then
 				return
 			end
-			local ok, err = pcall(function()
+			local ok, result = pcall(function()
 				return TeleportService:TeleportAsync(game.PlaceId, group, options)
 			end)
 			if ok then
+				-- Stragglers retry into the same private server.
+				local retry = Instance.new("TeleportOptions")
+				retry.ReservedServerAccessCode = (result :: TeleportAsyncResult).ReservedServerAccessCode
+				retry:SetTeleportData({ room = roomId, difficulty = difficulty, party = userIds })
+				for _, player in group do
+					pending[player] = { kind = "party", options = retry, attempts = 1 }
+				end
 				return
 			end
-			warn("[Block Horde] party teleport failed (attempt " .. attempt .. "): " .. tostring(err))
+			warn("[Block Horde] party teleport failed (attempt " .. attempt .. "): " .. tostring(result))
 			task.wait(2 * attempt)
 		end
 		-- Teleports keep failing: play in this server instead.
@@ -97,6 +114,9 @@ function Teleporter.sendHome(players: { Player })
 				return TeleportService:TeleportAsync(game.PlaceId, group)
 			end)
 			if ok then
+				for _, player in group do
+					pending[player] = { kind = "home", options = nil, attempts = 1 }
+				end
 				return
 			end
 			warn("[Block Horde] teleport home failed (attempt " .. attempt .. "): " .. tostring(err))
@@ -107,7 +127,29 @@ end
 
 function Teleporter.start()
 	TeleportService.TeleportInitFailed:Connect(function(player: Player, _result: Enum.TeleportResult, message: string)
-		Announce:FireClient(player, "TELEPORT FAILED: " .. message, "info")
+		local entry = pending[player]
+		if not entry or entry.attempts >= MAX_ATTEMPTS then
+			pending[player] = nil
+			if entry and entry.kind == "home" then
+				-- Better than leaving them alone in an empty game server.
+				player:Kick("Couldn't get you back to the lobby. Please rejoin the game.")
+			else
+				Announce:FireClient(player, "TELEPORT FAILED: " .. message, "info")
+			end
+			return
+		end
+		entry.attempts += 1
+		Announce:FireClient(player, "TELEPORT FAILED, RETRYING...", "info")
+		task.delay(2 * entry.attempts, function()
+			if player.Parent then
+				pcall(function()
+					TeleportService:TeleportAsync(game.PlaceId, { player }, entry.options)
+				end)
+			end
+		end)
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		pending[player] = nil
 	end)
 end
 

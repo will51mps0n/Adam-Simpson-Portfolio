@@ -10,7 +10,7 @@ Co-op for 1-6 players, with a lobby where you form parties.
 2. **View > Command Bar**, paste this line, press **Enter**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/INSTALLER_COMMIT/block-horde/studio/install.luau",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/4b6682ba2ea50a5b34aaf03d6f9dc5bfdb79a33c/block-horde/studio/install.luau",true) require(M)()
 ```
 
 3. The Output window prints `[Block Horde] installed build ...`. **File > Save**, then press **Play**.

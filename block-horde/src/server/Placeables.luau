@@ -38,6 +38,8 @@ export type Placeable = {
 	head: Model?,
 	blastRadius: number,
 	blastDamage: number,
+	detonateAt: number,
+	detonateBy: Player?,
 	ammo: number,
 	fireInterval: number,
 	fireReadyAt: number,
@@ -113,6 +115,17 @@ function Placeables.canPlace(c: number, r: number): boolean
 	if char == "#" or char == "S" or g:isBlocked(c, r) or byCell[key(c, r)] then
 		return false
 	end
+	-- Not on top of an enemy (it would be stuck inside).
+	local size = g.cellSize
+	local minX, minZ = g.originX + (c - 1) * size, g.originZ + (r - 1) * size
+	for _, enemy in EnemyService.list() do
+		local px = math.clamp(enemy.x, minX, minX + size)
+		local pz = math.clamp(enemy.z, minZ, minZ + size)
+		local dx, dz = enemy.x - px, enemy.z - pz
+		if dx * dx + dz * dz < enemy.radius * enemy.radius then
+			return false
+		end
+	end
 	-- Not on top of a player.
 	for _, participant in RunState.alive() do
 		local character = participant.player.Character
@@ -168,6 +181,8 @@ function Placeables.place(owner: Player, kind: string, c: number, r: number, sta
 		head = head,
 		blastRadius = stats.blastRadius,
 		blastDamage = stats.damage,
+		detonateAt = 0,
+		detonateBy = nil,
 		ammo = Config.TURRET_AMMO,
 		fireInterval = stats.turretFireInterval,
 		fireReadyAt = 0,
@@ -201,20 +216,15 @@ function Placeables.remove(placeable: Placeable)
 	EnemyService.markDirty()
 end
 
--- Barrels and mines go off after `delay` seconds; `by` gets the credit
--- (defaults to whoever placed it).
+-- Barrels and mines go off after `delay` seconds of run time (so nothing
+-- explodes while paused); `by` gets the credit (defaults to whoever placed it).
 function Placeables.detonate(placeable: Placeable, delay: number, by: Player?)
 	if placeable.detonating or not placeable.alive then
 		return
 	end
 	placeable.detonating = true
-	task.delay(delay, function()
-		if not placeable.alive then
-			return
-		end
-		Placeables.remove(placeable)
-		Placeables.onExplode(placeable, by)
-	end)
+	placeable.detonateAt = RunState.clock + delay
+	placeable.detonateBy = by
 end
 
 function Placeables.damage(placeable: Placeable, amount: number, by: Player?)
@@ -305,10 +315,15 @@ function Placeables.update(clock: number)
 		return
 	end
 	for _, placeable in table.clone(all) do
-		if not placeable.alive or placeable.detonating then
+		if not placeable.alive then
 			continue
 		end
-		if placeable.kind == "turret" then
+		if placeable.detonating then
+			if clock >= placeable.detonateAt then
+				Placeables.remove(placeable)
+				Placeables.onExplode(placeable, placeable.detonateBy)
+			end
+		elseif placeable.kind == "turret" then
 			updateTurret(g, placeable, clock)
 		elseif placeable.kind == "mine" then
 			updateMine(placeable)

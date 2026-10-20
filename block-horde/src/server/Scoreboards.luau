@@ -15,8 +15,8 @@ type Cached = { rows: { HighScores.Row }?, fetchedAt: number }
 
 local Scoreboards = {}
 
-local FETCH_GAP = 7 -- seconds between DataStore reads
-local STALE_AFTER = 120
+local FETCH_GAP = 15 -- seconds between DataStore reads (budget: 5 + 2 per player per minute)
+local STALE_AFTER = 300
 
 local boards: { Board } = {}
 local cache: { [string]: Cached } = {}

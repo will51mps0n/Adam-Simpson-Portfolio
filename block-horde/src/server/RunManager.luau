@@ -283,6 +283,28 @@ function RunManager.begin(players: { Player }, roomId: string, difficulty: strin
 	return true
 end
 
+-- Someone who arrives after the run started watches until it ends (or, with
+-- REVIVE_AT_WAVE_END, joins in at the next wave).
+function RunManager.addSpectator(player: Player)
+	if not RunState.active or RunState.phase == "Over" or RunState.participants[player] then
+		return
+	end
+	local used: { [number]: boolean } = {}
+	for _, participant in RunState.participants do
+		used[participant.slot] = true
+	end
+	local slot = 1
+	while used[slot] do
+		slot += 1
+	end
+	RunState.participants[player] = { player = player, slot = slot, alive = false }
+	CharacterService.setSlot(player, slot)
+	player:SetAttribute("InRun", true)
+	Loadout.reset(player)
+	Scoring.add(player)
+	Announce:FireClient(player, "THE GAME ALREADY STARTED - SPECTATING", "info")
+end
+
 function RunManager.init()
 	EnemyService.hooks.attackPlayer = PlayerHealth.damage
 	CharacterService.Died:Connect(onDied)

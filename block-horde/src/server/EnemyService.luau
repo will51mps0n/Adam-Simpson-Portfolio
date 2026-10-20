@@ -78,6 +78,7 @@ local snapshotTimer = 0
 local pendingDeaths: { number } = {}
 local buckets: { [number]: { Enemy } } = {}
 local rng = Random.new()
+local lastClock = 0 -- run clock at the latest update, for new enemies' timers
 
 local function angleOf(dx: number, dz: number): number
 	return math.atan2(-dx, -dz)
@@ -369,6 +370,7 @@ end
 function EnemyService.start(g: RoomGrid.RoomGrid)
 	EnemyService.clear()
 	grid = g
+	lastClock = 0
 end
 
 function EnemyService.clear()
@@ -425,8 +427,8 @@ function EnemyService.spawn(kind: string, cell: RoomGrid.Cell, speedMultiplier: 
 		teleportReadyAt = 0,
 		alive = true,
 	}
-	enemy.fireReadyAt = rng:NextNumber(1, 2.5)
-	enemy.teleportReadyAt = rng:NextNumber(2, 4)
+	enemy.fireReadyAt = lastClock + rng:NextNumber(1, 2.5)
+	enemy.teleportReadyAt = lastClock + rng:NextNumber(2, 4)
 	table.insert(living, enemy)
 	byId[enemy.id] = enemy
 	return enemy
@@ -466,6 +468,7 @@ function EnemyService.update(dt: number, clock: number, targets: { Target })
 	if not g then
 		return
 	end
+	lastClock = clock
 	fieldTimer -= dt
 	if fieldDirty or fieldTimer <= 0 then
 		rebuildField(g, targets)

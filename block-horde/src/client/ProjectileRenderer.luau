@@ -105,7 +105,11 @@ end
 
 local function update(dt: number)
 	local now = os.clock()
+	local paused = workspace:GetAttribute("Paused") == true
 	for id, entry in flying do
+		if paused then
+			entry.born += dt -- freeze in place while the game is paused
+		end
 		local age = now - entry.born
 		if age > MAX_AGE then
 			flying[id] = nil

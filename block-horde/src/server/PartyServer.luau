@@ -22,8 +22,15 @@ function PartyServer.isPartyServer(): boolean
 end
 
 function PartyServer.start()
+	local started, finished = false, false
 	Players.PlayerAdded:Connect(function(player)
-		Announce:FireClient(player, "WAITING FOR YOUR PARTY...", "info")
+		if finished then
+			Teleporter.sendHome({ player })
+		elseif started then
+			RunManager.addSpectator(player)
+		else
+			Announce:FireClient(player, "WAITING FOR YOUR PARTY...", "info")
+		end
 	end)
 	task.spawn(function()
 		local first = Players:GetPlayers()[1] or Players.PlayerAdded:Wait()
@@ -63,7 +70,9 @@ function PartyServer.start()
 		end
 		task.wait(1)
 
+		started = true
 		RunManager.begin(Players:GetPlayers(), roomId, difficulty, function(_finished: { Player })
+			finished = true
 			Teleporter.sendHome(Players:GetPlayers())
 		end)
 	end)

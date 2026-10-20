@@ -2302,6 +2302,12 @@ function CharacterService.setSlot(player: Player, slot: number)
 	end
 end
 
+-- Gives a player the lowest free slot again (after a run handed out party slots).
+function CharacterService.reassignSlot(player: Player)
+	slots[player] = nil
+	CharacterService.setSlot(player, takeFreeSlot())
+end
+
 -- Puts the player at `cframe` with full health, spawning a new character if
 -- they have none or are dead. Yields until done.
 function CharacterService.spawnAt(player: Player, cframe: CFrame)
@@ -2457,6 +2463,7 @@ local snapshotTimer = 0
 local pendingDeaths: { number } = {}
 local buckets: { [number]: { Enemy } } = {}
 local rng = Random.new()
+local lastClock = 0 -- run clock at the latest update, for new enemies' timers
 
 local function angleOf(dx: number, dz: number): number
 	return math.atan2(-dx, -dz)
@@ -2748,6 +2755,7 @@ end
 function EnemyService.start(g: RoomGrid.RoomGrid)
 	EnemyService.clear()
 	grid = g
+	lastClock = 0
 end
 
 function EnemyService.clear()
@@ -2804,8 +2812,8 @@ function EnemyService.spawn(kind: string, cell: RoomGrid.Cell, speedMultiplier: 
 		teleportReadyAt = 0,
 		alive = true,
 	}
-	enemy.fireReadyAt = rng:NextNumber(1, 2.5)
-	enemy.teleportReadyAt = rng:NextNumber(2, 4)
+	enemy.fireReadyAt = lastClock + rng:NextNumber(1, 2.5)
+	enemy.teleportReadyAt = lastClock + rng:NextNumber(2, 4)
 	table.insert(living, enemy)
 	byId[enemy.id] = enemy
 	return enemy
@@ -2845,6 +2853,7 @@ function EnemyService.update(dt: number, clock: number, targets: { Target })
 	if not g then
 		return
 	end
+	lastClock = clock
 	fieldTimer -= dt
 	if fieldDirty or fieldTimer <= 0 then
 		rebuildField(g, targets)
@@ -3157,6 +3166,14 @@ function Loadout.useAmmo(player: Player, weaponId: string): boolean
 	state.ammo[weaponId] = left - 1
 	state.dirty = true
 	return true
+end
+
+-- Asks for a resync, e.g. after the server turned down a shot the client already counted.
+function Loadout.markDirty(player: Player)
+	local state = states[player]
+	if state then
+		state.dirty = true
+	end
 end
 
 -- Gives back a shot that could not be used (e.g. nowhere to place a barrel).
@@ -3482,8 +3499,15 @@ function PartyServer.isPartyServer(): boolean
 end
 
 function PartyServer.start()
+	local started, finished = false, false
 	Players.PlayerAdded:Connect(function(player)
-		Announce:FireClient(player, "WAITING FOR YOUR PARTY...", "info")
+		if finished then
+			Teleporter.sendHome({ player })
+		elseif started then
+			RunManager.addSpectator(player)
+		else
+			Announce:FireClient(player, "WAITING FOR YOUR PARTY...", "info")
+		end
 	end)
 	task.spawn(function()
 		local first = Players:GetPlayers()[1] or Players.PlayerAdded:Wait()
@@ -3523,7 +3547,9 @@ function PartyServer.start()
 		end
 		task.wait(1)
 
+		started = true
 		RunManager.begin(Players:GetPlayers(), roomId, difficulty, function(_finished: { Player })
+			finished = true
 			Teleporter.sendHome(Players:GetPlayers())
 		end)
 	end)
@@ -3928,6 +3954,8 @@ export type Placeable = {
 	head: Model?,
 	blastRadius: number,
 	blastDamage: number,
+	detonateAt: number,
+	detonateBy: Player?,
 	ammo: number,
 	fireInterval: number,
 	fireReadyAt: number,
@@ -4003,6 +4031,17 @@ function Placeables.canPlace(c: number, r: number): boolean
 	if char == "#" or char == "S" or g:isBlocked(c, r) or byCell[key(c, r)] then
 		return false
 	end
+	-- Not on top of an enemy (it would be stuck inside).
+	local size = g.cellSize
+	local minX, minZ = g.originX + (c - 1) * size, g.originZ + (r - 1) * size
+	for _, enemy in EnemyService.list() do
+		local px = math.clamp(enemy.x, minX, minX + size)
+		local pz = math.clamp(enemy.z, minZ, minZ + size)
+		local dx, dz = enemy.x - px, enemy.z - pz
+		if dx * dx + dz * dz < enemy.radius * enemy.radius then
+			return false
+		end
+	end
 	-- Not on top of a player.
 	for _, participant in RunState.alive() do
 		local character = participant.player.Character
@@ -4058,6 +4097,8 @@ function Placeables.place(owner: Player, kind: string, c: number, r: number, sta
 		head = head,
 		blastRadius = stats.blastRadius,
 		blastDamage = stats.damage,
+		detonateAt = 0,
+		detonateBy = nil,
 		ammo = Config.TURRET_AMMO,
 		fireInterval = stats.turretFireInterval,
 		fireReadyAt = 0,
@@ -4091,20 +4132,15 @@ function Placeables.remove(placeable: Placeable)
 	EnemyService.markDirty()
 end
 
--- Barrels and mines go off after `delay` seconds; `by` gets the credit
--- (defaults to whoever placed it).
+-- Barrels and mines go off after `delay` seconds of run time (so nothing
+-- explodes while paused); `by` gets the credit (defaults to whoever placed it).
 function Placeables.detonate(placeable: Placeable, delay: number, by: Player?)
 	if placeable.detonating or not placeable.alive then
 		return
 	end
 	placeable.detonating = true
-	task.delay(delay, function()
-		if not placeable.alive then
-			return
-		end
-		Placeables.remove(placeable)
-		Placeables.onExplode(placeable, by)
-	end)
+	placeable.detonateAt = RunState.clock + delay
+	placeable.detonateBy = by
 end
 
 function Placeables.damage(placeable: Placeable, amount: number, by: Player?)
@@ -4195,10 +4231,15 @@ function Placeables.update(clock: number)
 		return
 	end
 	for _, placeable in table.clone(all) do
-		if not placeable.alive or placeable.detonating then
+		if not placeable.alive then
 			continue
 		end
-		if placeable.kind == "turret" then
+		if placeable.detonating then
+			if clock >= placeable.detonateAt then
+				Placeables.remove(placeable)
+				Placeables.onExplode(placeable, placeable.detonateBy)
+			end
+		elseif placeable.kind == "turret" then
 			updateTurret(g, placeable, clock)
 		elseif placeable.kind == "mine" then
 			updateMine(placeable)
@@ -4421,7 +4462,7 @@ local function stepRocket(rocket: Projectile, dt: number): (number?, number?)
 end
 
 -- Moves a fireball; returns true when it is used up.
-local function stepFireball(ball: Projectile, dt: number): boolean
+local function stepFireball(ball: Projectile, dt: number, players: { RunState.Participant }, barrels: { Placeables.Placeable }): boolean
 	local grid = Arena.grid()
 	local stride = ball.speed * dt
 	if grid:raycast(ball.x, ball.z, ball.dx, ball.dz, stride) < stride then
@@ -4431,7 +4472,7 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 	ball.z += ball.dz * stride
 	ball.traveled += stride
 
-	for _, participant in RunState.alive() do
+	for _, participant in players do
 		local character = participant.player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if root and root:IsA("BasePart") then
@@ -4444,7 +4485,7 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 		end
 	end
 
-	for _, barrel in Placeables.barrels() do
+	for _, barrel in barrels do
 		local dx, dz = barrel.x - ball.x, barrel.z - ball.z
 		local reach = Config.FIREBALL_RADIUS + Config.BARREL_RADIUS
 		if dx * dx + dz * dz <= reach * reach then
@@ -4453,9 +4494,12 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 		end
 	end
 
-	-- Burns through zombies (but not other devils).
-	for _, enemy in table.clone(EnemyService.list()) do
-		if enemy.kind ~= "Devil" and not ball.burned[enemy.id] and not enemy.entering then
+	-- Burns through zombies (but not other devils). Walks the list backwards
+	-- because a kill swaps the last enemy into the dead one's place.
+	local enemies = EnemyService.list()
+	for i = #enemies, 1, -1 do
+		local enemy = enemies[i]
+		if enemy and enemy.kind ~= "Devil" and not ball.burned[enemy.id] and not enemy.entering then
 			local dx, dz = enemy.x - ball.x, enemy.z - ball.z
 			local reach = Config.FIREBALL_RADIUS + enemy.radius
 			if dx * dx + dz * dz <= reach * reach then
@@ -4468,6 +4512,8 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 end
 
 function Projectiles.update(dt: number, clock: number)
+	local players: { RunState.Participant }? = nil
+	local barrels: { Placeables.Placeable }? = nil
 	for i = #active, 1, -1 do
 		local projectile = active[i]
 		if projectile.kind == "grenade" then
@@ -4481,8 +4527,12 @@ function Projectiles.update(dt: number, clock: number)
 				finish(i, bx, bz)
 				Explosions.explode(bx, bz, projectile.blastRadius, projectile.damage, projectile.owner, "rocket")
 			end
-		elseif stepFireball(projectile, dt) then
-			finish(i, projectile.x, projectile.z)
+		else
+			players = players or RunState.alive()
+			barrels = barrels or Placeables.barrels()
+			if stepFireball(projectile, dt, players :: { RunState.Participant }, barrels :: { Placeables.Placeable }) then
+				finish(i, projectile.x, projectile.z)
+			end
 		end
 	end
 end
@@ -4962,6 +5012,28 @@ function RunManager.begin(players: { Player }, roomId: string, difficulty: strin
 	return true
 end
 
+-- Someone who arrives after the run started watches until it ends (or, with
+-- REVIVE_AT_WAVE_END, joins in at the next wave).
+function RunManager.addSpectator(player: Player)
+	if not RunState.active or RunState.phase == "Over" or RunState.participants[player] then
+		return
+	end
+	local used: { [number]: boolean } = {}
+	for _, participant in RunState.participants do
+		used[participant.slot] = true
+	end
+	local slot = 1
+	while used[slot] do
+		slot += 1
+	end
+	RunState.participants[player] = { player = player, slot = slot, alive = false }
+	CharacterService.setSlot(player, slot)
+	player:SetAttribute("InRun", true)
+	Loadout.reset(player)
+	Scoring.add(player)
+	Announce:FireClient(player, "THE GAME ALREADY STARTED - SPECTATING", "info")
+end
+
 function RunManager.init()
 	EnemyService.hooks.attackPlayer = PlayerHealth.damage
 	CharacterService.Died:Connect(onDied)
@@ -5075,8 +5147,8 @@ type Cached = { rows: { HighScores.Row }?, fetchedAt: number }
 
 local Scoreboards = {}
 
-local FETCH_GAP = 7 -- seconds between DataStore reads
-local STALE_AFTER = 120
+local FETCH_GAP = 15 -- seconds between DataStore reads (budget: 5 + 2 per player per minute)
+local STALE_AFTER = 300
 
 local boards: { Board } = {}
 local cache: { [string]: Cached } = {}
@@ -5220,6 +5292,14 @@ function Scoring.reset(players: { Player })
 	end
 end
 
+function Scoring.add(player: Player)
+	if not entries[player] then
+		local entry = { combo = Combo.new(), score = 0, kills = 0 }
+		entries[player] = entry
+		publish(player, entry)
+	end
+end
+
 function Scoring.clear()
 	for player in entries do
 		publish(player, nil)
@@ -5301,7 +5381,14 @@ local RunManager = require(script.Parent.RunManager)
 
 local Announce = Net.event("Announce")
 
+type Pending = { kind: string, options: TeleportOptions?, attempts: number }
+
 local Teleporter = {}
+
+local MAX_ATTEMPTS = 4
+-- Players whose teleport was accepted; most failures only show up later through
+-- TeleportInitFailed, so this remembers how to try them again.
+local pending: { [Player]: Pending } = {}
 
 -- Where players go when a run in this server ends. Set by Main.
 Teleporter.homeSpawn = function(_player: Player): CFrame?
@@ -5322,9 +5409,12 @@ end
 function Teleporter.playHere(players: { Player }, roomId: string, difficulty: string)
 	local started = RunManager.begin(players, roomId, difficulty, function(finished: { Player })
 		for _, player in finished do
-			local home = Teleporter.homeSpawn(player)
-			if player.Parent and home then
-				task.spawn(CharacterService.spawnAt, player, home)
+			if player.Parent then
+				CharacterService.reassignSlot(player)
+				local home = Teleporter.homeSpawn(player)
+				if home then
+					task.spawn(CharacterService.spawnAt, player, home)
+				end
 			end
 		end
 	end)
@@ -5354,13 +5444,20 @@ function Teleporter.launch(players: { Player }, roomId: string, difficulty: stri
 			if #group == 0 then
 				return
 			end
-			local ok, err = pcall(function()
+			local ok, result = pcall(function()
 				return TeleportService:TeleportAsync(game.PlaceId, group, options)
 			end)
 			if ok then
+				-- Stragglers retry into the same private server.
+				local retry = Instance.new("TeleportOptions")
+				retry.ReservedServerAccessCode = (result :: TeleportAsyncResult).ReservedServerAccessCode
+				retry:SetTeleportData({ room = roomId, difficulty = difficulty, party = userIds })
+				for _, player in group do
+					pending[player] = { kind = "party", options = retry, attempts = 1 }
+				end
 				return
 			end
-			warn("[Block Horde] party teleport failed (attempt " .. attempt .. "): " .. tostring(err))
+			warn("[Block Horde] party teleport failed (attempt " .. attempt .. "): " .. tostring(result))
 			task.wait(2 * attempt)
 		end
 		-- Teleports keep failing: play in this server instead.
@@ -5383,6 +5480,9 @@ function Teleporter.sendHome(players: { Player })
 				return TeleportService:TeleportAsync(game.PlaceId, group)
 			end)
 			if ok then
+				for _, player in group do
+					pending[player] = { kind = "home", options = nil, attempts = 1 }
+				end
 				return
 			end
 			warn("[Block Horde] teleport home failed (attempt " .. attempt .. "): " .. tostring(err))
@@ -5393,7 +5493,29 @@ end
 
 function Teleporter.start()
 	TeleportService.TeleportInitFailed:Connect(function(player: Player, _result: Enum.TeleportResult, message: string)
-		Announce:FireClient(player, "TELEPORT FAILED: " .. message, "info")
+		local entry = pending[player]
+		if not entry or entry.attempts >= MAX_ATTEMPTS then
+			pending[player] = nil
+			if entry and entry.kind == "home" then
+				-- Better than leaving them alone in an empty game server.
+				player:Kick("Couldn't get you back to the lobby. Please rejoin the game.")
+			else
+				Announce:FireClient(player, "TELEPORT FAILED: " .. message, "info")
+			end
+			return
+		end
+		entry.attempts += 1
+		Announce:FireClient(player, "TELEPORT FAILED, RETRYING...", "info")
+		task.delay(2 * entry.attempts, function()
+			if player.Parent then
+				pcall(function()
+					TeleportService:TeleportAsync(game.PlaceId, { player }, entry.options)
+				end)
+			end
+		end)
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		pending[player] = nil
 	end)
 end
 
@@ -5515,6 +5637,7 @@ local function onFire(player: Player, weaponId: unknown, dirX: unknown, dirZ: un
 	end
 	local allowedAt = times[weaponId] or 0
 	if now < allowedAt - stats.fireInterval * 0.5 then
+		Loadout.markDirty(player)
 		return
 	end
 	times[weaponId] = math.max(allowedAt, now) + stats.fireInterval
@@ -6262,8 +6385,8 @@ return Effects
             <string name="Source"><![CDATA[--!strict
 -- Draws every enemy from the server's position updates. Models come from a
 -- pool per enemy type and are all moved with one BulkMoveTo call per frame.
--- Positions are drawn slightly in the past (ENEMY_INTERP_DELAY) so the
--- renderer can blend smoothly between updates. Legs swing while walking,
+-- Positions are drawn slightly in the past (at least ENEMY_INTERP_DELAY, more
+-- on a laggy connection) so the renderer can blend smoothly between updates. Legs swing while walking,
 -- enemies flash white when hit and burst into blocks and a splat on death.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -6309,15 +6432,18 @@ export type Target = { x: number, z: number, radius: number }
 
 local EnemyRenderer = {}
 
-local HIDDEN = CFrame.new(0, -500, 0)
+local HIDDEN = CFrame.new(0, -10000, 0)
 local STALE_AFTER = 1.5 -- seconds without an update before an enemy is dropped
 local FLASH_COLOR = Color3.new(1, 1, 1)
+local GHOST_GUARD = 1 -- ignore updates for an enemy this long after it died
 
 local folder: Folder
 local pools: { [string]: { Model } } = {}
 local rendered: { [number]: Rendered } = {}
 local bulkParts: { BasePart } = {}
 local bulkFrames: { CFrame } = {}
+local deadUntil: { [number]: number } = {}
+local lag = 0 -- how old position updates are when they arrive (smoothed)
 local groanTimer = 3
 
 local function buildModel(kind: string): Model
@@ -6385,7 +6511,17 @@ end
 local function onSnapshot(buf: buffer)
 	local now = os.clock()
 	local time = Snapshot.time(buf)
+	-- Rise fast, settle slowly, so a laggy moment doesn't cause stutter.
+	local age = workspace:GetServerTimeNow() - time
+	lag = if age > lag then age else lag + (age - lag) * 0.05
 	Snapshot.read(buf, function(id: number, kindIndex: number, x: number, z: number, facing: number, health: number)
+		local guard = deadUntil[id]
+		if guard then
+			if now < guard then
+				return -- a late update about an enemy that already died
+			end
+			deadUntil[id] = nil
+		end
 		local kind = Config.ENEMY_KINDS[kindIndex] or "Zombie"
 		local entry: Rendered? = rendered[id]
 		if entry and entry.kind ~= kind then
@@ -6416,9 +6552,15 @@ local function onSnapshot(buf: buffer)
 		end
 		current.health = health
 		current.lastSeen = now
-		table.insert(current.samples, { t = time, x = x, z = z, facing = facing })
-		if #current.samples > 4 then
-			table.remove(current.samples, 1)
+		-- Keep samples in time order: unreliable updates can arrive out of order.
+		local samples = current.samples
+		local at = #samples + 1
+		while at > 1 and samples[at - 1].t > time do
+			at -= 1
+		end
+		table.insert(samples, at, { t = time, x = x, z = z, facing = facing })
+		if #samples > 4 then
+			table.remove(samples, 1)
 		end
 	end)
 end
@@ -6430,6 +6572,7 @@ local function onDied(list: { number })
 		if entry then
 			release(entry)
 		end
+		deadUntil[id] = os.clock() + GHOST_GUARD
 		local spec = EnemyModels.SPECS[Config.ENEMY_KINDS[kindIndex] or "Zombie"] or EnemyModels.SPECS.Zombie
 		Effects.enemyDeath(x, z, spec.debris)
 	end
@@ -6482,12 +6625,16 @@ end
 
 local function update(dt: number)
 	local now = os.clock()
-	local renderTime = workspace:GetServerTimeNow() - Config.ENEMY_INTERP_DELAY
+	local delay = math.max(Config.ENEMY_INTERP_DELAY, lag + 1 / Config.SNAPSHOT_RATE + 0.03)
+	local renderTime = workspace:GetServerTimeNow() - math.min(delay, 0.6)
+	local paused = workspace:GetAttribute("Paused") == true
 	table.clear(bulkParts)
 	table.clear(bulkFrames)
 	local count = 0
 	for _, entry in rendered do
-		if now - entry.lastSeen > STALE_AFTER then
+		if paused then
+			entry.lastSeen = now -- no updates come while paused; keep everyone
+		elseif now - entry.lastSeen > STALE_AFTER then
 			release(entry)
 			continue
 		end
@@ -7679,6 +7826,7 @@ local STYLES: { [string]: Style } = {
 
 local labels: { [string]: TextLabel } = {}
 local tokens: { [string]: number } = {}
+local fades: { [string]: Tween } = {}
 local unlockQueue: { string } = {}
 local unlockBusy = false
 
@@ -7690,6 +7838,11 @@ local function show(style: string, text: string)
 	end
 	tokens[style] = (tokens[style] or 0) + 1
 	local token = tokens[style]
+	local running = fades[style]
+	if running then
+		running:Cancel()
+		fades[style] = nil
+	end
 	label.Text = text
 	label.TextColor3 = spec.color
 	label.TextTransparency = 0
@@ -7702,8 +7855,9 @@ local function show(style: string, text: string)
 		if tokens[style] ~= token then
 			return
 		end
-		local fade = TweenInfo.new(0.4)
-		TweenService:Create(label, fade, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		local fade = TweenService:Create(label, TweenInfo.new(0.4), { TextTransparency = 1, TextStrokeTransparency = 1 })
+		fades[style] = fade
+		fade:Play()
 	end)
 end
 
@@ -7865,7 +8019,11 @@ end
 
 local function update(dt: number)
 	local now = os.clock()
+	local paused = workspace:GetAttribute("Paused") == true
 	for id, entry in flying do
+		if paused then
+			entry.born += dt -- freeze in place while the game is paused
+		end
 		local age = now - entry.born
 		if age > MAX_AGE then
 			flying[id] = nil

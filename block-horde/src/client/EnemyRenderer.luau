@@ -1,8 +1,8 @@
 --!strict
 -- Draws every enemy from the server's position updates. Models come from a
 -- pool per enemy type and are all moved with one BulkMoveTo call per frame.
--- Positions are drawn slightly in the past (ENEMY_INTERP_DELAY) so the
--- renderer can blend smoothly between updates. Legs swing while walking,
+-- Positions are drawn slightly in the past (at least ENEMY_INTERP_DELAY, more
+-- on a laggy connection) so the renderer can blend smoothly between updates. Legs swing while walking,
 -- enemies flash white when hit and burst into blocks and a splat on death.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -48,15 +48,18 @@ export type Target = { x: number, z: number, radius: number }
 
 local EnemyRenderer = {}
 
-local HIDDEN = CFrame.new(0, -500, 0)
+local HIDDEN = CFrame.new(0, -10000, 0)
 local STALE_AFTER = 1.5 -- seconds without an update before an enemy is dropped
 local FLASH_COLOR = Color3.new(1, 1, 1)
+local GHOST_GUARD = 1 -- ignore updates for an enemy this long after it died
 
 local folder: Folder
 local pools: { [string]: { Model } } = {}
 local rendered: { [number]: Rendered } = {}
 local bulkParts: { BasePart } = {}
 local bulkFrames: { CFrame } = {}
+local deadUntil: { [number]: number } = {}
+local lag = 0 -- how old position updates are when they arrive (smoothed)
 local groanTimer = 3
 
 local function buildModel(kind: string): Model
@@ -124,7 +127,17 @@ end
 local function onSnapshot(buf: buffer)
 	local now = os.clock()
 	local time = Snapshot.time(buf)
+	-- Rise fast, settle slowly, so a laggy moment doesn't cause stutter.
+	local age = workspace:GetServerTimeNow() - time
+	lag = if age > lag then age else lag + (age - lag) * 0.05
 	Snapshot.read(buf, function(id: number, kindIndex: number, x: number, z: number, facing: number, health: number)
+		local guard = deadUntil[id]
+		if guard then
+			if now < guard then
+				return -- a late update about an enemy that already died
+			end
+			deadUntil[id] = nil
+		end
 		local kind = Config.ENEMY_KINDS[kindIndex] or "Zombie"
 		local entry: Rendered? = rendered[id]
 		if entry and entry.kind ~= kind then
@@ -155,9 +168,15 @@ local function onSnapshot(buf: buffer)
 		end
 		current.health = health
 		current.lastSeen = now
-		table.insert(current.samples, { t = time, x = x, z = z, facing = facing })
-		if #current.samples > 4 then
-			table.remove(current.samples, 1)
+		-- Keep samples in time order: unreliable updates can arrive out of order.
+		local samples = current.samples
+		local at = #samples + 1
+		while at > 1 and samples[at - 1].t > time do
+			at -= 1
+		end
+		table.insert(samples, at, { t = time, x = x, z = z, facing = facing })
+		if #samples > 4 then
+			table.remove(samples, 1)
 		end
 	end)
 end
@@ -169,6 +188,7 @@ local function onDied(list: { number })
 		if entry then
 			release(entry)
 		end
+		deadUntil[id] = os.clock() + GHOST_GUARD
 		local spec = EnemyModels.SPECS[Config.ENEMY_KINDS[kindIndex] or "Zombie"] or EnemyModels.SPECS.Zombie
 		Effects.enemyDeath(x, z, spec.debris)
 	end
@@ -221,12 +241,16 @@ end
 
 local function update(dt: number)
 	local now = os.clock()
-	local renderTime = workspace:GetServerTimeNow() - Config.ENEMY_INTERP_DELAY
+	local delay = math.max(Config.ENEMY_INTERP_DELAY, lag + 1 / Config.SNAPSHOT_RATE + 0.03)
+	local renderTime = workspace:GetServerTimeNow() - math.min(delay, 0.6)
+	local paused = workspace:GetAttribute("Paused") == true
 	table.clear(bulkParts)
 	table.clear(bulkFrames)
 	local count = 0
 	for _, entry in rendered do
-		if now - entry.lastSeen > STALE_AFTER then
+		if paused then
+			entry.lastSeen = now -- no updates come while paused; keep everyone
+		elseif now - entry.lastSeen > STALE_AFTER then
 			release(entry)
 			continue
 		end

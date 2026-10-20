@@ -141,7 +141,7 @@ local function stepRocket(rocket: Projectile, dt: number): (number?, number?)
 end
 
 -- Moves a fireball; returns true when it is used up.
-local function stepFireball(ball: Projectile, dt: number): boolean
+local function stepFireball(ball: Projectile, dt: number, players: { RunState.Participant }, barrels: { Placeables.Placeable }): boolean
 	local grid = Arena.grid()
 	local stride = ball.speed * dt
 	if grid:raycast(ball.x, ball.z, ball.dx, ball.dz, stride) < stride then
@@ -151,7 +151,7 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 	ball.z += ball.dz * stride
 	ball.traveled += stride
 
-	for _, participant in RunState.alive() do
+	for _, participant in players do
 		local character = participant.player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if root and root:IsA("BasePart") then
@@ -164,7 +164,7 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 		end
 	end
 
-	for _, barrel in Placeables.barrels() do
+	for _, barrel in barrels do
 		local dx, dz = barrel.x - ball.x, barrel.z - ball.z
 		local reach = Config.FIREBALL_RADIUS + Config.BARREL_RADIUS
 		if dx * dx + dz * dz <= reach * reach then
@@ -173,9 +173,12 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 		end
 	end
 
-	-- Burns through zombies (but not other devils).
-	for _, enemy in table.clone(EnemyService.list()) do
-		if enemy.kind ~= "Devil" and not ball.burned[enemy.id] and not enemy.entering then
+	-- Burns through zombies (but not other devils). Walks the list backwards
+	-- because a kill swaps the last enemy into the dead one's place.
+	local enemies = EnemyService.list()
+	for i = #enemies, 1, -1 do
+		local enemy = enemies[i]
+		if enemy and enemy.kind ~= "Devil" and not ball.burned[enemy.id] and not enemy.entering then
 			local dx, dz = enemy.x - ball.x, enemy.z - ball.z
 			local reach = Config.FIREBALL_RADIUS + enemy.radius
 			if dx * dx + dz * dz <= reach * reach then
@@ -188,6 +191,8 @@ local function stepFireball(ball: Projectile, dt: number): boolean
 end
 
 function Projectiles.update(dt: number, clock: number)
+	local players: { RunState.Participant }? = nil
+	local barrels: { Placeables.Placeable }? = nil
 	for i = #active, 1, -1 do
 		local projectile = active[i]
 		if projectile.kind == "grenade" then
@@ -201,8 +206,12 @@ function Projectiles.update(dt: number, clock: number)
 				finish(i, bx, bz)
 				Explosions.explode(bx, bz, projectile.blastRadius, projectile.damage, projectile.owner, "rocket")
 			end
-		elseif stepFireball(projectile, dt) then
-			finish(i, projectile.x, projectile.z)
+		else
+			players = players or RunState.alive()
+			barrels = barrels or Placeables.barrels()
+			if stepFireball(projectile, dt, players :: { RunState.Participant }, barrels :: { Placeables.Placeable }) then
+				finish(i, projectile.x, projectile.z)
+			end
 		end
 	end
 end

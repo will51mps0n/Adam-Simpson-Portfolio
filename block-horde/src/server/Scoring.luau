@@ -38,6 +38,14 @@ function Scoring.reset(players: { Player })
 	end
 end
 
+function Scoring.add(player: Player)
+	if not entries[player] then
+		local entry = { combo = Combo.new(), score = 0, kills = 0 }
+		entries[player] = entry
+		publish(player, entry)
+	end
+end
+
 function Scoring.clear()
 	for player in entries do
 		publish(player, nil)

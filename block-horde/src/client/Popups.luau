@@ -24,6 +24,7 @@ local STYLES: { [string]: Style } = {
 
 local labels: { [string]: TextLabel } = {}
 local tokens: { [string]: number } = {}
+local fades: { [string]: Tween } = {}
 local unlockQueue: { string } = {}
 local unlockBusy = false
 
@@ -35,6 +36,11 @@ local function show(style: string, text: string)
 	end
 	tokens[style] = (tokens[style] or 0) + 1
 	local token = tokens[style]
+	local running = fades[style]
+	if running then
+		running:Cancel()
+		fades[style] = nil
+	end
 	label.Text = text
 	label.TextColor3 = spec.color
 	label.TextTransparency = 0
@@ -47,8 +53,9 @@ local function show(style: string, text: string)
 		if tokens[style] ~= token then
 			return
 		end
-		local fade = TweenInfo.new(0.4)
-		TweenService:Create(label, fade, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		local fade = TweenService:Create(label, TweenInfo.new(0.4), { TextTransparency = 1, TextStrokeTransparency = 1 })
+		fades[style] = fade
+		fade:Play()
 	end)
 end
 
