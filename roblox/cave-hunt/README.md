@@ -106,7 +106,11 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Spawn:** at the far end of the Great Cavern, the Old Mine or the Crystal Grotto.
 - **Size:** 10 studs tall, twice a hider (`MONSTER_HEIGHT`). It fits through every tunnel and nook, but not the shack doors (7.5 studs) or doors in your own buildings that are sized for normal players. It can still punch through a doorway and search hiding spots through walls.
 - **Speed:** walks at 20 and sprints at 30, against the hiders' 16 and 26. It has more stamina than a hider.
-- **Shrink:** **C** (B on a gamepad, the Shrink button on a phone). The monster shrinks to half its size and gets faster (walks at 26, sprints at 36), so it can chase through small gaps. Press **C** again to grow back. If there's no room above it (say, in a low tunnel), it stays small and tells you so. Change it with `SHRINK_SCALE` / `SHRUNK_SPEEDS` at the top of `CaveHunt_Players`.
+- **Shrink:** **C** (B on a gamepad, the Shrink button on a phone) makes the monster a size smaller and faster, so it can chase through small gaps. Its footsteps get quieter too.
+  - **First press:** half size, walks at 26 and sprints at 36.
+  - **Second press:** quarter size (about half as tall as a hider), walks at 30 and sprints at 42.
+  - **Third press:** back to full size. If there's no room above it (say, in a low tunnel), it grows as big as fits, or stays small and tells you so.
+  - **Changing it:** `SHRINK_LEVELS` at the top of `CaveHunt_Players` (add more sizes if you like).
 - **Punching:** **click** (R2 on a gamepad, the Hit button on a phone). It hits the closest hider in front of it, within reach (bigger monsters reach further), never through a wall. One punch catches them. Once a second.
   - **Hiding spots:** hitting a hiding spot with someone inside catches them too. **E** ("Search") just pulls them out.
   - **What it looks like:** the monster's arm swings up by turning its shoulder joint. That works on any rig, with no animation file needed. Three red claw marks flash in front of it, with a swing sound and a thud on a hit.
@@ -138,14 +142,14 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Gamepad and phone:** L3 / B on a gamepad, Run / Crouch buttons on a phone.
 - **Crouch animation:** there isn't one built in, because Roblox only plays animations you own. Make one in the Animation Editor and put its ID in `CROUCH_ANIMATION` at the top of `StarterPlayerScripts.CaveHunt_Client`.
 
-| Speed | Hiders | Monster | Monster, shrunk (C) |
-| --- | --- | --- | --- |
-| Walk | 16 | 20 | 26 |
-| Sprint (Shift) | 26 | 30 | 36 |
-| Crouch (C) | 8 | (C shrinks) | |
-| Stamina | runs out after about 5 s | runs out after about 7 s | same |
+| Speed | Hiders | Monster | Monster, half size | Monster, quarter size |
+| --- | --- | --- | --- | --- |
+| Walk | 16 | 20 | 26 | 30 |
+| Sprint (Shift) | 26 | 30 | 36 | 42 |
+| Crouch (C) | 8 | (C shrinks) | | |
+| Stamina | runs out after about 5 s | runs out after about 7 s | same | same |
 
-Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` / `SHRUNK_SPEEDS` at the top of `ServerScriptService.CaveHunt_Players`, and stamina with `STAMINA_DRAIN` / `STAMINA_REGEN` in `CaveHunt_Client`. Shift lock is turned off, because Shift is sprint.
+Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` / `SHRINK_LEVELS` at the top of `ServerScriptService.CaveHunt_Players`, and stamina with `STAMINA_DRAIN` / `STAMINA_REGEN` in `CaveHunt_Client`. Shift lock is turned off, because Shift is sprint.
 
 **The HUD** (like Lethal Company)
 - **Top-left: your suit.** A small figure with a curved stamina meter round it. The meter turns red when you're nearly out. The figure crouches with you (or shrinks with the monster), and it shows HIDDEN, CROUCHING or RUNNING. It's red for the monster.
@@ -180,6 +184,7 @@ Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` / `SHRUNK_SPEEDS` at th
 | **Banana Peel** | 15 | anyone | Drops a peel at your feet. The next person to step on it (not you) sits down and can't move for 2 seconds. |
 | **Air Horn** | 10 | anyone | HONK. Shakes the screen of everyone within 60 studs, and the monster hears it from far away. |
 | **Fake Hider** | 20 | hiders | For 60 seconds the monster's Sense also points toward the nearest empty hiding spot, as if someone were in it. If the monster searches it, they're told it was a decoy. |
+| **Tiny Pill** | 25 | hiders | You shrink to super small (under a third of your size) for 30 seconds, to squeeze into gaps and corners. Your steps are much quieter. When it wears off you grow back as soon as there's room above you (inside a hiding spot, when you come out). `TINY_SCALE` / `TINY_TIME` at the top of `CaveHunt_Shop`. |
 
 Except for Snitch and Fake Noise, items can't be used while you're hiding.
 

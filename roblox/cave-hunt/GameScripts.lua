@@ -69,9 +69,12 @@ local LIGHT = Color3.fromRGB(255, 238, 210)
 -- lightsOut / shake / sound are how many seconds each lasts
 local ROAR = { cooldown = 25, range = 140, lightsOut = 12, shake = 3, sound = 3.5 }
 local CRY = { cooldown = 75, range = 260, lightsOut = 35, shake = 9, sound = 10 }
--- C makes the monster shrink to this much of its size and move at these speeds; C again grows it back
-local SHRINK_SCALE = 0.5
-local SHRUNK_SPEEDS = { walk = 26, sprint = 36, crouch = 26 }
+-- C shrinks the monster a size at a time and makes it faster: full size, then each of these, then
+-- back to full size (if there's room above it). `scale` is how much of its full size it is
+local SHRINK_LEVELS = {
+	{ scale = 0.5, speeds = { walk = 26, sprint = 36, crouch = 26 } },
+	{ scale = 0.25, speeds = { walk = 30, sprint = 42, crouch = 30 } },
+}
 -- Your guns (like the Luger in StarterPack) shoot with their own scripts. Whatever damage a gun does,
 -- each hit on the monster counts as one shot: SHOTS_TO_KILL shots kill it (it never heals), and each
 -- one stuns it for STUN_TIME seconds. A gun (a Tool with an "Ammo" value) holds MAGAZINE rounds,
@@ -947,9 +950,8 @@ roarRemote.OnServerEvent:Connect(function(player, kind)
 	end
 end)
 
------------------------------------------------------------------- the monster's shrink (C)
--- half the size (fits through smaller gaps) and faster; C again grows it back, if there's room above
-local lastShrink = {}
+------------------------------------------------------------------ resizing
+-- used by the monster's shrink (C) and the shop's Tiny Pill (ServerStorage.CaveHunt_Resize)
 local function bottomOf(character)
 	local box, size = character:GetBoundingBox()
 	return box.Position.Y - size.Y / 2
@@ -977,6 +979,40 @@ local function roomToGrow(character, scale)
 	return true
 end
 
+-- quickly (not in one jump) to `scale`; false if it would grow into rock
+local function setSize(character, scale)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local from = character:GetScale()
+	if not humanoid or math.abs(scale - from) < 0.001 then
+		return humanoid ~= nil
+	end
+	if scale > from and not roomToGrow(character, scale) then
+		return false
+	end
+	humanoid:UnequipTools() -- so a tool in your hand doesn't change size with you
+	local root = character:FindFirstChild("HumanoidRootPart")
+	playSound(root or character, PUNCH_SOUND, scale < from and 1.6 or 0.6, 1.5)
+	local ok, err = pcall(function()
+		for step = 1, 5 do
+			resize(character, from + (scale - from) * step / 5)
+			task.wait(0.04)
+		end
+	end)
+	if not ok then
+		warn("[CaveHunt] Couldn't resize " .. character.Name .. ": " .. tostring(err))
+	end
+	return true
+end
+
+local resizeFunction = ServerStorage:FindFirstChild("CaveHunt_Resize") or Instance.new("BindableFunction")
+resizeFunction.Name = "CaveHunt_Resize"
+resizeFunction.OnInvoke = setSize
+resizeFunction.Parent = ServerStorage
+
+------------------------------------------------------------------ the monster's shrink (C)
+-- each press is a size smaller and faster (SHRINK_LEVELS); from the smallest it grows back to full size,
+-- or as big as there's room for
+local lastShrink = {}
 shrinkRemote.OnServerEvent:Connect(function(player)
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -984,30 +1020,25 @@ shrinkRemote.OnServerEvent:Connect(function(player)
 		return
 	end
 	lastShrink[player] = os.clock()
-	local shrunk = character:GetAttribute("Shrunk")
 	local full = character:GetAttribute("FullScale") or character:GetScale()
-	local from = character:GetScale()
-	local to = shrunk and full or full * SHRINK_SCALE
-	if shrunk and not roomToGrow(character, to) then
-		local notify = ReplicatedStorage:FindFirstChild("CaveHunt_Notify")
-		if notify then
-			notify:FireClient(player, "No room to grow back here")
-		end
+	character:SetAttribute("FullScale", full)
+	local level = character:GetAttribute("ShrinkLevel") or 0
+	local function scaleOf(l)
+		return full * (l > 0 and SHRINK_LEVELS[l].scale or 1)
+	end
+	local nextLevel = level < #SHRINK_LEVELS and level + 1 or 0
+	local done = setSize(character, scaleOf(nextLevel))
+	while not done and nextLevel < level - 1 do -- no room for full size: as big as fits
+		nextLevel += 1
+		done = setSize(character, scaleOf(nextLevel))
+	end
+	if not done then
+		tell(player, "No room to grow back here")
 		return
 	end
-	character:SetAttribute("FullScale", full)
-	character:SetAttribute("Shrunk", not shrunk or nil)
-	playSound(character:FindFirstChild("HumanoidRootPart") or character, PUNCH_SOUND, shrunk and 0.6 or 1.6, 1.5)
-	local ok, err = pcall(function()
-		for step = 1, 5 do -- quickly, not in one jump
-			resize(character, from + (to - from) * step / 5)
-			task.wait(0.04)
-		end
-	end)
-	if not ok then
-		warn("[CaveHunt] Couldn't resize the monster: " .. tostring(err))
-	end
-	setSpeeds(character, shrunk and MONSTER_SPEEDS or SHRUNK_SPEEDS)
+	character:SetAttribute("ShrinkLevel", nextLevel > 0 and nextLevel or nil)
+	character:SetAttribute("Shrunk", nextLevel > 0 or nil) -- (the HUD figure shrinks too)
+	setSpeeds(character, nextLevel > 0 and SHRINK_LEVELS[nextLevel].speeds or MONSTER_SPEEDS)
 	character:SetAttribute("Reach", PUNCH_REACH + character:GetExtentsSize().Y * 0.3)
 	player.CameraMinZoomDistance = math.max(8, character:GetExtentsSize().Y * 1.1)
 end)
@@ -1792,6 +1823,45 @@ function EFFECTS.FakeHider(player)
 		end
 	end)
 	notify:FireClient(player, "Decoy set: for 60s the monster's Sense also points toward that " .. tostring(spot:GetAttribute("HideType") or "spot") .. ".")
+	return true
+end
+
+-- Tiny Pill: you shrink to TINY_SCALE of your size for TINY_TIME seconds, small enough to squeeze
+-- into gaps and corners. When it wears off you grow back as soon as there's room above you.
+local TINY_SCALE = 0.3
+local TINY_TIME = 30
+function EFFECTS.TinyPill(player)
+	local character, humanoid = alive(player)
+	local resize = ServerStorage:FindFirstChild("CaveHunt_Resize")
+	if character:GetAttribute("Tiny") then
+		notify:FireClient(player, "You're already tiny.")
+		return false
+	end
+	if not resize then
+		return false
+	end
+	local full = character:GetScale()
+	if not resize:Invoke(character, full * TINY_SCALE) then
+		return false
+	end
+	character:SetAttribute("Tiny", true)
+	notify:FireClient(player, ("You're tiny for %d seconds!"):format(TINY_TIME))
+	task.delay(TINY_TIME, function()
+		local warned = false
+		while character.Parent and humanoid.Health > 0 and player.Character == character do
+			if not player:GetAttribute("Hidden") then -- (inside a hiding spot: wait until you come out)
+				if resize:Invoke(character, full) then
+					character:SetAttribute("Tiny", nil)
+					notify:FireClient(player, "The pill wore off. You're back to normal size.")
+					return
+				elseif not warned then
+					warned = true
+					notify:FireClient(player, "The pill wore off. Move somewhere with more room to grow back.")
+				end
+			end
+			task.wait(1)
+		end
+	end)
 	return true
 end
 
@@ -2591,7 +2661,7 @@ task.spawn(function()
 		suit.Visible = player.Character ~= nil and r ~= "Spectator"
 		role.Text = monster and "MONSTER" or "HIDER"
 		role.TextColor3 = color
-		local small = move.crouching or (monster and player.Character and player.Character:GetAttribute("Shrunk"))
+		local small = move.crouching or (player.Character and (player.Character:GetAttribute("Shrunk") or player.Character:GetAttribute("Tiny")))
 		figure.Size = UDim2.fromOffset(40, small and 58 or 80)
 		for _, f in ipairs(limbs) do
 			f.BackgroundColor3 = color
@@ -2630,6 +2700,7 @@ local STEP_SOUNDS = {
 	Monster = { id = "rbxasset://sounds/action_footsteps_plastic.mp3", pitch = 0.55, stomp = "rbxasset://sounds/action_jump_land.mp3", stride = 6 },
 }
 local STEP_LOUDNESS = { -- { volume, heard up to this many studs away }; the monster is 1.6x both
+	-- (small feet are quieter: a shrunk monster or a hider on a Tiny Pill, see `small` below)
 	crouch = { 0.05, 16 },
 	walk = { 0.6, 70 },
 	sprint = { 1.3, 150 },
@@ -2664,8 +2735,10 @@ RunService.Heartbeat:Connect(function(dt)
 				local crouch = character:GetAttribute("CrouchSpeed") or walk * 0.5
 				local sprint = character:GetAttribute("SprintSpeed") or walk * 1.5
 				local mode = speed > (walk + sprint) / 2 and "sprint" or (speed < (crouch + walk) / 2 and "crouch" or "walk")
-				local volume = STEP_LOUDNESS[mode][1] * (monster and 1.6 or 1)
-				local reach = STEP_LOUDNESS[mode][2] * (monster and 1.6 or 1)
+				local shrink = character:GetAttribute("ShrinkLevel")
+				local small = character:GetAttribute("Tiny") and 0.3 or (shrink == 1 and 0.6) or (shrink == 2 and 0.35) or 1
+				local volume = STEP_LOUDNESS[mode][1] * (monster and 1.6 or 1) * small
+				local reach = STEP_LOUDNESS[mode][2] * (monster and 1.6 or 1) * small
 				st.loop.Volume = volume
 				st.loop.RollOffMaxDistance = reach
 				st.loop.RollOffMinDistance = reach / 10
@@ -4064,6 +4137,7 @@ end)
 	{ key = "Banana", name = "Banana Peel", price = 15, who = "Any", tip = "Drop a peel at your feet. The next person to step on it slips for 2s", source = USE_NOW },
 	{ key = "AirHorn", name = "Air Horn", price = 10, who = "Any", tip = "HONK. Shakes everyone within 60 studs, and the monster hears it from far away", source = USE_NOW },
 	{ key = "FakeHider", name = "Fake Hider", price = 20, who = "Hider", tip = "For 60s the monster's Sense also points toward the nearest empty hiding spot", source = USE_NOW },
+	{ key = "TinyPill", name = "Tiny Pill", price = 25, who = "Hider", tip = "Shrink to super small for 30s and squeeze into gaps and corners. You grow back when it wears off", source = USE_NOW },
 }
 for i, item in ipairs(SHOP_ITEMS) do
 	item.order = i
