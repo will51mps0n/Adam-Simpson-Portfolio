@@ -40,6 +40,7 @@ local DEFAULTS = {
 	DECOR_COPIES = 2,
 	BIG = 30, -- studs across; anything bigger is placed once unless it has a Count attribute
 	COLLECT_FROM_WORKSPACE = "auto", -- "auto" = only the first time (before CaveAssets exists); true = always; false = never
+	ASSET_LIGHT_SCALE = 0.35, -- lights inside your models are dimmed to this much in the cave (1 = as bright as you made them)
 }
 
 local function run(options)
@@ -291,7 +292,8 @@ local function run(options)
 				end
 				for copy = 1, count do
 					local t = group[(copy - 1) % #group + 1]
-					table.insert(jobs, { asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, offset = t.offset, copy = copy })
+					-- "copy" = how many times this particular model has come up, so every model gets its first one in
+					table.insert(jobs, { asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, offset = t.offset, copy = math.floor((copy - 1) / #group) + 1 })
 				end
 			end
 		end
@@ -340,7 +342,7 @@ local function run(options)
 			return a.footprint > b.footprint
 		end)
 
-		local placed, failed, errors = {}, {}, {}
+		local placed, failed, errors, placedAsset = {}, {}, {}, {}
 		for _, job in ipairs(jobs) do
 			local ok, err = pcall(function()
 				-- free spots it fits in, preferring snug ones so the big spots stay free for big models
@@ -386,6 +388,11 @@ local function run(options)
 					end
 					for _, p in ipairs(partsOf(clone)) do
 						p.Anchored = true
+					end
+					for _, d in ipairs(clone:GetDescendants()) do
+						if d:IsA("Light") then
+							d.Brightness *= CONFIG.ASSET_LIGHT_SCALE
+						end
 					end
 
 					-- turn it (around world Y only, so it stays upright) so its front faces the
@@ -434,6 +441,7 @@ local function run(options)
 					end
 					clone.Parent = out
 					placed[job.name] = (placed[job.name] or 0) + 1
+					placedAsset[job.asset] = true
 				end
 			end)
 			if not ok then
@@ -441,24 +449,29 @@ local function run(options)
 			end
 		end
 
-		local total, extras, missing = 0, 0, 0
-		local names = {}
+		local total, names = 0, {}
 		for name, count in pairs(placed) do
 			total += count
 			table.insert(names, ("%s x%d"):format(name, count))
 		end
 		table.sort(names)
 		print(("[PlaceAssets] Put %d of your models in the cave: %s"):format(total, table.concat(names, ", ")))
-		for name, f in pairs(failed) do
-			if placed[name] then
-				extras += f.n
-			else
-				missing += 1
-				warn(("[PlaceAssets] '%s' didn't fit anywhere (%d studs across, %d tall; the biggest spot is %d). Place it by hand."):format(name, f.job.footprint, f.job.height, biggest))
+		local skipped = 0
+		for _, f in pairs(failed) do
+			skipped += f.n
+		end
+		local missing, seen = {}, {}
+		for _, job in ipairs(jobs) do
+			if not placedAsset[job.asset] and not seen[job.asset] then
+				seen[job.asset] = true
+				table.insert(missing, ("%s (%d studs across)"):format(job.name, job.footprint))
 			end
 		end
-		if extras > 0 then
-			print(("[PlaceAssets] Skipped %d extra copies because the cave is full.%s"):format(extras, missing == 0 and " Every model is in at least once." or ""))
+		if #missing > 0 then
+			warn(("[PlaceAssets] These didn't fit anywhere (the biggest spot is %d studs across): %s. Place them by hand."):format(biggest, table.concat(missing, ", ")))
+		end
+		if skipped > 0 then
+			print(("[PlaceAssets] Skipped %d extra copies because the cave is full.%s"):format(skipped, #missing == 0 and " Every model is in at least once." or ""))
 		end
 		if #errors > 0 then
 			warn("[PlaceAssets] Some models couldn't be placed because of an error. Copy this message and send it to Claude:\n" .. table.concat(errors, "\n"))

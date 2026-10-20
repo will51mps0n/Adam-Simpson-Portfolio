@@ -68,7 +68,7 @@ local function run(options)
 
 		local M = Enum.Material
 		local AIR, ROCK = M.Air, M.Slate
-		local HALF = 560 -- the rock block is 1120 x 1120 studs
+		local HALF = 400 -- the rock block is 800 x 800 studs
 		local ROCK_BOTTOM, ROCK_TOP = -64, 136 -- Y range of the rock block, relative to ORIGIN
 		local LANE_HALF = 8 -- keep walking lanes this wide (each side) clear of props inside rooms
 
@@ -98,7 +98,10 @@ local function run(options)
 
 		local old = workspace:FindFirstChild("CaveSystem")
 		-- caves from the first test versions (before this attribute existed) get replaced automatically
-		local fromTestVersion = old and old:GetAttribute("Origin") == nil
+		local oldOrigin = old and old:GetAttribute("Origin")
+		local oldBoxCenter = old and old:GetAttribute("BoxCenter")
+		local oldBoxSize = old and old:GetAttribute("BoxSize")
+		local fromTestVersion = old ~= nil and oldOrigin == nil
 		if old and not CONFIG.OVERWRITE and not fromTestVersion then
 			warn("[CaveBuilder] Workspace.CaveSystem already exists. To rebuild it, end the command with require(M)({ OVERWRITE = true }). That wipes the cave and anything you changed inside it.")
 			return false
@@ -115,6 +118,9 @@ local function run(options)
 
 		-- Earlier versions put the rock block in other places. If one of those blocks is
 		-- still there (a corner of it is solid Slate), clear it out.
+		if typeof(oldBoxCenter) == "Vector3" and typeof(oldBoxSize) == "Vector3" then
+			Terrain:FillBlock(CFrame.new(oldBoxCenter), oldBoxSize + Vector3.new(8, 8, 8), AIR)
+		end
 		local OLD_SPOTS = {
 			{ origin = Vector3.new(0, -200, 0), probe = Vector3.new(384, -100, 384) }, -- under the Baseplate
 			{ origin = Vector3.new(0, 64, -1450), probe = Vector3.new(384, 100, -1068) }, -- past the -Z edge
@@ -187,46 +193,34 @@ local function run(options)
 		-- +Z is "south" (Base Camp), -Z is "north" (the lairs).
 		------------------------------------------------------------------------
 		local ROOMS = {
-			{ name = "BaseCamp", kind = "Spawn", pos = Vector3.new(0, 0, 300), rx = 44, rz = 38, h = 34, floor = M.Ground },
-			{ name = "GreatCavern", kind = "Big", pos = Vector3.new(0, -8, 80), rx = 115, rz = 85, h = 66, floor = M.Ground },
-			{ name = "OldMine", kind = "Room", pos = Vector3.new(-210, 0, 170), rx = 58, rz = 42, h = 32, floor = M.Ground, wall = M.Sandstone },
-			{ name = "CrystalGrotto", kind = "Room", pos = Vector3.new(210, 4, 190), rx = 52, rz = 46, h = 44, floor = M.Rock, wall = M.Basalt },
-			{ name = "ShackTown", kind = "Big", pos = Vector3.new(-200, -8, -110), rx = 84, rz = 64, h = 46, floor = M.Ground },
-			{ name = "SunkenLake", kind = "Room", pos = Vector3.new(200, -16, -60), rx = 68, rz = 56, h = 48, floor = M.Sand, wall = M.Limestone },
-			{ name = "TheAbyss", kind = "Big", pos = Vector3.new(0, -12, -200), rx = 80, rz = 58, h = 72, floor = M.Rock, wall = M.Basalt },
-			{ name = "LairWest", kind = "Lair", pos = Vector3.new(-335, 0, 20), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			{ name = "LairEast", kind = "Lair", pos = Vector3.new(335, 4, 60), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			{ name = "LairNorthWest", kind = "Lair", pos = Vector3.new(-300, -4, -295), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			{ name = "LairNorthEast", kind = "Lair", pos = Vector3.new(300, -12, -285), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			{ name = "LairNorth", kind = "Lair", pos = Vector3.new(20, -16, -345), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			-- the cave breaks into the Backrooms: a wallpaper maze, rectangular, 10 x 12 cells of 14 studs
-			{ name = "Backrooms", kind = "Maze", pos = Vector3.new(450, -4, -140), rx = 70, rz = 84, h = 12, floor = M.Ground, wall = M.Basalt, cell = 14 },
+			{ name = "BaseCamp", kind = "Spawn", pos = Vector3.new(0, 0, 230), rx = 40, rz = 34, h = 32, floor = M.Ground },
+			{ name = "GreatCavern", kind = "Big", pos = Vector3.new(0, -8, 40), rx = 105, rz = 80, h = 60, floor = M.Ground },
+			{ name = "OldMine", kind = "Room", pos = Vector3.new(-190, 0, 170), rx = 52, rz = 40, h = 30, floor = M.Ground, wall = M.Sandstone },
+			{ name = "CrystalGrotto", kind = "Room", pos = Vector3.new(190, 4, 170), rx = 48, rz = 42, h = 40, floor = M.Rock, wall = M.Basalt },
+			{ name = "ShackTown", kind = "Big", pos = Vector3.new(-200, -8, -130), rx = 72, rz = 56, h = 42, floor = M.Ground },
+			-- the cave breaks into the Backrooms: a wallpaper maze, rectangular, 9 x 10 cells of 14 studs
+			{ name = "Backrooms", kind = "Maze", pos = Vector3.new(200, -4, -135), rx = 63, rz = 70, h = 12, floor = M.Ground, wall = M.Basalt, cell = 14 },
+			{ name = "LairWest", kind = "Lair", pos = Vector3.new(-330, 0, 20), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
+			{ name = "LairEast", kind = "Lair", pos = Vector3.new(330, 4, 20), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
+			{ name = "LairNorth", kind = "Lair", pos = Vector3.new(0, -12, -260), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
 		}
 
 		-- { from, to, radius, lantern every N studs (nil = pitch dark) }
 		local TUNNELS = {
 			{ "BaseCamp", "GreatCavern", 13, 60 },
-			{ "GreatCavern", "TheAbyss", 13, 70 },
 			{ "BaseCamp", "OldMine", 11, 70 },
 			{ "BaseCamp", "CrystalGrotto", 11, 70 },
 			{ "OldMine", "GreatCavern", 11, 80 },
 			{ "CrystalGrotto", "GreatCavern", 11, 80 },
 			{ "GreatCavern", "ShackTown", 12, 75 },
-			{ "GreatCavern", "SunkenLake", 12, 75 },
-			{ "ShackTown", "TheAbyss", 11, 90 },
-			{ "SunkenLake", "TheAbyss", 11, 90 },
+			{ "GreatCavern", "Backrooms", 12, nil },
+			{ "GreatCavern", "LairNorth", 11, 120 },
+			{ "ShackTown", "LairNorth", 10, 120 },
+			{ "Backrooms", "LairNorth", 10, nil },
 			{ "OldMine", "LairWest", 10, 120 },
-			{ "CrystalGrotto", "LairEast", 10, 120 },
 			{ "ShackTown", "LairWest", 10, 120 },
-			{ "SunkenLake", "LairEast", 10, 120 },
-			{ "ShackTown", "LairNorthWest", 10, 120 },
-			{ "SunkenLake", "LairNorthEast", 10, 120 },
-			{ "TheAbyss", "LairNorth", 10, 120 },
-			{ "LairNorthWest", "LairNorth", 9, nil },
-			{ "LairNorthEast", "LairNorth", 9, nil },
-			{ "SunkenLake", "Backrooms", 11, nil },
-			{ "LairEast", "Backrooms", 10, nil },
-			{ "LairNorthEast", "Backrooms", 10, nil },
+			{ "CrystalGrotto", "LairEast", 10, 120 },
+			{ "Backrooms", "LairEast", 10, nil },
 		}
 
 		local rooms, ROOM = {}, {}
@@ -488,8 +482,11 @@ local function run(options)
 				lifted[inst.Name] = (lifted[inst.Name] or 0) + 1
 			end
 		end
-		for _, c in ipairs(workspace:GetChildren()) do
-			liftIfBuried(c)
+		local rebuildingInPlace = oldOrigin == O
+		if not rebuildingInPlace then
+			for _, c in ipairs(workspace:GetChildren()) do
+				liftIfBuried(c)
+			end
 		end
 		local liftedNames = {}
 		for name, n in pairs(lifted) do
@@ -497,7 +494,7 @@ local function run(options)
 		end
 		table.sort(liftedNames)
 
-		local CHUNK = 280
+		local CHUNK = 200
 		for x = -HALF, HALF - CHUNK, CHUNK do
 			for z = -HALF, HALF - CHUNK, CHUNK do
 				Terrain:FillBlock(
@@ -687,7 +684,7 @@ local function run(options)
 			return p
 		end
 
-		local GLOW = CONFIG.DARK_CAVE and 0.4 or 1 -- dark mode dims every light except the campfire + Base Camp
+		local GLOW = CONFIG.DARK_CAVE and 0.3 or 1 -- dark mode dims every light except the campfire + Base Camp
 		local function addLight(parent, range, brightness, color, full)
 			local l = Instance.new("PointLight")
 			l.Range = range
@@ -1060,22 +1057,6 @@ local function run(options)
 			stats.parts += 1
 			if withBarrel then -- a sneaky hiding spot up top, facing inwards so you exit onto the platform
 				buildBarrel(cf * CFrame.new(2, H + 0.3, 2) * CFrame.Angles(0, math.pi / 2, 0), m)
-			end
-			m.Parent = F.structures
-			return m
-		end
-
-		local function buildDock(a, b)
-			local m = newModel("Dock")
-			local cf = CFrame.lookAt(a, b)
-			local len = (b - a).Magnitude
-			for d = 0, len, 1.6 do
-				P(m, Vector3.new(6, 0.3, 1.4), cf * CFrame.new(0, 0.6, -d) * CFrame.Angles(0, rand(-0.03, 0.03), 0), C.plank, M.WoodPlanks)
-			end
-			for d = 4, len, 6 do
-				for _, x in ipairs({ -2.8, 2.8 }) do
-					P(m, Vector3.new(0.6, 5, 0.6), cf * CFrame.new(x, -1.6, -d), C.darkWood, M.Wood)
-				end
 			end
 			m.Parent = F.structures
 			return m
@@ -1456,17 +1437,18 @@ local function run(options)
 			for c = 1, cols, 2 do
 				for r = 1, rows, 2 do
 					local roll = rand(0, 1)
-					local panel = P(m, Vector3.new(3, 0.15, 1.6), at(x0 + (c - 0.5) * cell, h - 0.47, z0 + (r - 0.5) * cell), roll < 0.2 and Color3.fromRGB(120, 118, 110) or TUBE, roll < 0.2 and M.SmoothPlastic or M.Neon, { CanCollide = false })
-					if roll >= 0.2 then
+					local dead = roll < 0.45
+					local panel = P(m, Vector3.new(3, 0.15, 1.6), at(x0 + (c - 0.5) * cell, h - 0.47, z0 + (r - 0.5) * cell), dead and Color3.fromRGB(110, 108, 100) or TUBE, dead and M.SmoothPlastic or M.Neon, { CanCollide = false })
+					if not dead then
 						local light = Instance.new("SurfaceLight")
 						light.Face = Enum.NormalId.Bottom
-						light.Range = 18
-						light.Angle = 140
-						light.Brightness = 1.4 * GLOW
+						light.Range = 12
+						light.Angle = 100
+						light.Brightness = 1.2 * GLOW
 						light.Color = Color3.fromRGB(255, 236, 180)
 						light.Parent = panel
 						stats.lights += 1
-						if roll > 0.7 then
+						if roll > 0.65 then
 							CollectionService:AddTag(light, "Flicker")
 						end
 					end
@@ -1560,6 +1542,9 @@ local function run(options)
 					buildShack(placeAt(room, p))
 				end)
 			end
+			tryPlace(room, 10, { rhoMin = 0.35, rhoMax = 0.8 }, function(p)
+				buildScaffold(placeAt(room, p), true)
+			end)
 			addPillars(room, 3, 6, 9)
 			addPropSpots(room, 8)
 			addBarricades(room, 5)
@@ -1631,54 +1616,6 @@ local function run(options)
 			addHidingSpots(room, 1, { "Barrel", "Crate" })
 			addLanterns(room, 6)
 			addClutter(room, 5)
-		end
-
-		function DRESS.SunkenLake(room)
-			local p, c = findSpot(room, 17, { tries = 400, best = true, rhoMax = 0.7 })
-			if p then
-				local fy = room.pos.Y
-				local pr = math.min(c - 5, 26)
-				local mid = Vector3.new(p.X, fy, p.Z)
-				reserve(room, p, pr + 5)
-				Terrain:FillCylinder(CFrame.new(W(mid - Vector3.new(0, 4, 0))), 8, pr + 5, M.Sand) -- sandy shore
-				Terrain:FillCylinder(CFrame.new(W(mid - Vector3.new(0, 3, 0))), 6, pr, AIR) -- dig the basin
-				Terrain:FillCylinder(CFrame.new(W(mid - Vector3.new(0, 3.5, 0))), 5, pr, M.Water)
-				local out = flat(room.pos) - p
-				out = out.Magnitude > 1 and out.Unit or Vector3.new(0, 0, 1)
-				buildDock(W(mid + out * (pr + 4)), W(mid + out * (pr - 10)))
-				if pr >= 16 then -- tiny island with a barrel to hide in
-					Terrain:FillCylinder(CFrame.new(W(mid - Vector3.new(0, 3.25, 0))), 5.5, 7, M.Sand)
-					buildBarrel(CFrame.lookAt(W(mid - Vector3.new(0, 0.5, 0)), W(mid - Vector3.new(0, 0.5, 0) + out)))
-				end
-			end
-			tryPlace(room, 12, { rhoMin = 0.4, rhoMax = 0.85 }, function(q)
-				buildShack(placeAt(room, q))
-			end)
-			addPropSpots(room, 5)
-			addBarricades(room, 2)
-			addHidingSpots(room, 2)
-			addStalagmites(room, 6)
-			addBoulders(room, 2, 4, 6)
-			addLanterns(room, 4)
-			addClutter(room, 2)
-		end
-
-		function DRESS.TheAbyss(room)
-			addLargeSpot(room)
-			local towers = 0
-			for _ = 1, 2 do
-				tryPlace(room, 10, { rhoMin = 0.3, rhoMax = 0.8 }, function(p)
-					towers += 1
-					buildScaffold(placeAt(room, p), towers == 1)
-				end)
-			end
-			addPillars(room, 4, 7, 11)
-			addPropSpots(room, 6)
-			addBarricades(room, 4)
-			addHidingSpots(room, 2)
-			addBoulders(room, 5, 4, 8)
-			addStalagmites(room, 10)
-			addLanterns(room, 3, { brightness = 0.9 })
 		end
 
 		local function dressLair(room)
@@ -1765,6 +1702,40 @@ local function run(options)
 		------------------------------------------------------------------------
 		-- Finish up
 		------------------------------------------------------------------------
+		-- Anything of yours in Workspace that the new rock now buries (say you placed it in a
+		-- tunnel that's gone after a rebuild) is moved onto the top of the rock.
+		local function buried(pos)
+			local ok, mats, occ = pcall(function()
+				local corner = Vector3.new(math.floor(pos.X / 4) * 4, math.floor(pos.Y / 4) * 4, math.floor(pos.Z / 4) * 4)
+				return Terrain:ReadVoxels(Region3.new(corner, corner + Vector3.new(4, 4, 4)), 4)
+			end)
+			return ok and mats[1][1][1] ~= AIR and mats[1][1][1] ~= M.Water and occ[1][1][1] > 0.5
+		end
+		local unburied = {}
+		local function rescue(inst)
+			if inst == root or inst:IsA("Terrain") or inst:IsA("Camera") or inst.Name == "Baseplate" then
+				return
+			end
+			if inst:IsA("Folder") then
+				for _, c in ipairs(inst:GetChildren()) do
+					rescue(c)
+				end
+				return
+			end
+			if not (inst:IsA("Model") or inst:IsA("BasePart")) then
+				return
+			end
+			local lo, hi = boxOf(inst)
+			local mid = (lo + hi) / 2
+			if lo.X ~= math.huge and math.abs(mid.X - O.X) < HALF and math.abs(mid.Z - O.Z) < HALF and mid.Y > rockLo.Y and mid.Y < rockHi.Y and buried(mid) then
+				inst:PivotTo(inst:GetPivot() + Vector3.new(0, rockHi.Y - lo.Y + 0.05, 0))
+				table.insert(unburied, inst.Name)
+			end
+		end
+		for _, c in ipairs(workspace:GetChildren()) do
+			rescue(c)
+		end
+
 		local disabled = {}
 		if CONFIG.DISABLE_OTHER_SPAWNS then
 			for _, d in ipairs(workspace:GetDescendants()) do
@@ -1797,6 +1768,9 @@ local function run(options)
 			os.clock() - startTime, #ROOMS, #TUNNELS, #nooks, stats.hiding, stats.monster, stats.props, stats.lights, stats.parts
 		))
 		print("[CaveBuilder] The cave is the big block of rock in the middle of your Baseplate. The camera is now inside it at Base Camp. Press Play to walk around.")
+		if #unburied > 0 then
+			print("[CaveBuilder] These were inside the new rock, so they're now on top of it: " .. table.concat(unburied, ", "))
+		end
 		if #liftedNames > 0 then
 			print("[CaveBuilder] Lifted these onto the top of the rock so they weren't buried: " .. table.concat(liftedNames, ", "))
 		end
