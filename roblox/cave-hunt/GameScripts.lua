@@ -57,6 +57,7 @@ local CollectionService = game:GetService("CollectionService")
 local HIDER_SPEED = 16
 local MONSTER_SPEED = 26
 local MONSTER_SCALE = 1.5 -- the built-in monster is 1.5x as tall as a hider
+local MONSTER_MAX_HEIGHT = 11 -- your monster model is shrunk to this height if it's taller, so it fits the tunnels
 local LIGHT = Color3.fromRGB(255, 238, 210)
 local ROAR_COOLDOWN = 25
 local ROAR_RANGE = 140
@@ -279,6 +280,83 @@ local function setupMonster(player, character)
 	end
 end
 
+-- your monster model: ServerStorage.Monster, or the model GameScripts found in your Workspace and moved
+-- to ServerStorage for you (it has the CaveHuntMonster attribute)
+local function monsterTemplate()
+	local named = ServerStorage:FindFirstChild("Monster")
+	if named and named:IsA("Model") then
+		return named
+	end
+	for _, d in ipairs(ServerStorage:GetChildren()) do
+		if d:IsA("Model") and d:GetAttribute("CaveHuntMonster") then
+			return d
+		end
+	end
+	return nil
+end
+
+local function stopScripts(model)
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BaseScript") then
+			d.Enabled = false -- its own AI/movement/animation scripts would fight the player's controls
+		end
+	end
+end
+
+local function shrinkToFit(model)
+	local height = model:GetExtentsSize().Y
+	if height > MONSTER_MAX_HEIGHT then
+		pcall(function()
+			model:ScaleTo(model:GetScale() * MONSTER_MAX_HEIGHT / height)
+		end)
+	end
+end
+
+-- a model that isn't a rigged character: your character wears it like a costume (welded on, your
+-- own body hidden, your character scaled to about its height so it bumps into walls like it looks)
+local function wearCostume(character, template)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not (root and humanoid) then
+		return
+	end
+	for _, d in ipairs(character:GetDescendants()) do
+		if d:IsA("Accessory") then
+			d:Destroy()
+		elseif d:IsA("BasePart") or d:IsA("Decal") then
+			d.Transparency = 1
+		end
+	end
+	local costume = template:Clone()
+	costume.Name = "MonsterCostume"
+	stopScripts(costume)
+	shrinkToFit(costume)
+	pcall(function()
+		character:ScaleTo(math.clamp(costume:GetExtentsSize().Y / 5, 0.6, 2.2))
+	end)
+	-- stand it on the character's feet, facing the same way
+	local look = root.CFrame.LookVector
+	local feet = root.Position - Vector3.new(0, root.Size.Y / 2 + humanoid.HipHeight, 0)
+	local pivot = costume:GetPivot()
+	costume:PivotTo(CFrame.lookAt(pivot.Position, pivot.Position + Vector3.new(look.X, 0, look.Z)))
+	local boxCFrame, boxSize = costume:GetBoundingBox()
+	local bottom = boxCFrame.Position - Vector3.new(0, boxSize.Y / 2, 0)
+	costume:PivotTo(costume:GetPivot() + (feet - bottom))
+	for _, part in ipairs(costume:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+			part.CanCollide = false
+			part.CanQuery = false
+			part.Massless = true
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = root
+			weld.Part1 = part
+			weld.Parent = part
+		end
+	end
+	costume.Parent = character
+end
+
 local converting = {}
 local function becomeMonster(player)
 	if converting[player] then
@@ -287,35 +365,48 @@ local function becomeMonster(player)
 	converting[player] = true
 	player:SetAttribute("Role", "Monster")
 	local ok, err = pcall(function()
-		local template = ServerStorage:FindFirstChild("Monster")
+		local template = monsterTemplate()
 		local spawnAt = monsterSpawn()
-		if template and template:IsA("Model") and template:FindFirstChildOfClass("Humanoid") and template:FindFirstChild("HumanoidRootPart") then
+		-- start from a normal character: it brings the Backpack and Roblox's standard walk animations
+		player:LoadCharacter()
+		local character = player.Character or player.CharacterAdded:Wait()
+		if not player:HasAppearanceLoaded() then
+			player.CharacterAppearanceLoaded:Wait()
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local templateHumanoid = template and template:FindFirstChildOfClass("Humanoid")
+		if template and templateHumanoid and template:FindFirstChild("HumanoidRootPart") then
+			-- your rigged monster: you play as it
 			local body = template:Clone()
+			stopScripts(body)
 			for _, d in ipairs(body:GetDescendants()) do
-				if d.ClassName == "Script" then
-					d.Enabled = false -- its own AI/movement script would fight the player's controls (LocalScripts like Animate keep running)
-				elseif d:IsA("BasePart") then
+				if d:IsA("BasePart") then
 					d.Anchored = false
 				end
 			end
+			-- animations made by someone else don't load in your game, so a body built like a
+			-- normal Roblox character gets Roblox's standard ones (KeepAnimations = true keeps its own)
+			local animate = character:FindFirstChild("Animate")
+			if animate and humanoid and templateHumanoid.RigType == humanoid.RigType and not template:GetAttribute("KeepAnimations") then
+				local own = body:FindFirstChild("Animate")
+				if own then
+					own:Destroy()
+				end
+				animate:Clone().Parent = body
+			end
+			shrinkToFit(body)
 			body.Name = player.Name
-			if spawnAt then
-				body:PivotTo(spawnAt)
-			end
-			local previous = player.Character
-			body.Parent = workspace
+			body:PivotTo(spawnAt or character:GetPivot())
 			player.Character = body
-			if previous and previous ~= body then
-				previous:Destroy()
-			end
+			body.Parent = workspace
+			character:Destroy()
 			setupMonster(player, body)
 		else
-			player:LoadCharacter()
-			local character = player.Character or player.CharacterAdded:Wait()
-			if not player:HasAppearanceLoaded() then
-				player.CharacterAppearanceLoaded:Wait()
+			if template then
+				wearCostume(character, template)
+			else
+				monsterize(character) -- no model of yours: your own character in black with red eyes
 			end
-			monsterize(character)
 			if spawnAt then
 				character:PivotTo(spawnAt)
 			end
@@ -1657,7 +1748,8 @@ end)
 ]==]
 
 SOURCES.Client = [==[
--- CaveHunt client: role + shop buttons, flashlight controls, the cave mood, flickering lights.
+-- CaveHunt client: round timer, shop + Admin buttons, spectating, flashlight controls, the cave mood
+-- (the monster's night vision), flickering lights.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
@@ -1679,7 +1771,9 @@ local function round(obj, radius)
 end
 local function make(className, parent, props)
 	local t = Instance.new(className)
-	t.BackgroundTransparency = 1
+	if t:IsA("GuiObject") then
+		t.BackgroundTransparency = 1
+	end
 	if className:find("^Text") then
 		t.TextColor3 = Color3.fromRGB(235, 235, 240)
 		t.Font = Enum.Font.GothamBold
@@ -2031,7 +2125,7 @@ task.spawn(function()
 	end
 end)
 
--- The shop: the "Shop" button under the role button (or B) opens it. Coins are on the
+-- The shop: the "Shop" button in the top-right corner (or B) opens it. Coins are on the
 -- leaderboard. Bought items go in your hotbar, and each use spends one.
 task.spawn(function()
 	local buy = ReplicatedStorage:WaitForChild("CaveHunt_Buy", 30)
@@ -2241,8 +2335,9 @@ ProximityPromptService.PromptShown:Connect(function(prompt)
 	end
 end)
 
--- Cave mood: near-black, short fog and a washed-out, contrasty grade while you're
--- inside the cave's rock block (a dim red night vision for the monster).
+-- Cave mood while you're inside the cave's rock block: no fog, and no sun, sky or ambient light,
+-- so hiders only see what a light shines on (flashlights, lanterns, glowing crystals).
+-- The monster gets green night vision instead (N switches it off and on).
 -- Everything goes back to normal when you leave.
 local grade = Instance.new("ColorCorrectionEffect")
 grade.Name = "CaveHunt_Grade"
@@ -2257,6 +2352,7 @@ bloom.Threshold = 0.85
 bloom.Enabled = false
 bloom.Parent = Lighting
 
+local nightVision = true
 local saved
 local function setCaveMood(on)
 	local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
@@ -2273,44 +2369,42 @@ local function setCaveMood(on)
 	end
 	if on then
 		local monster = isMonster()
+		local seeing = monster and nightVision
 		saved = {
 			lighting = {
 				Ambient = Lighting.Ambient,
 				OutdoorAmbient = Lighting.OutdoorAmbient,
+				Brightness = Lighting.Brightness,
 				EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
 				EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
-				FogColor = Lighting.FogColor,
 				FogStart = Lighting.FogStart,
 				FogEnd = Lighting.FogEnd,
 			},
 		}
-		Lighting.Ambient = monster and Color3.fromRGB(46, 16, 16) or Color3.fromRGB(2, 2, 4)
-		Lighting.OutdoorAmbient = monster and Color3.fromRGB(46, 16, 16) or Color3.fromRGB(4, 4, 6)
+		local ambient = seeing and Color3.fromRGB(90, 120, 90) or (monster and Color3.fromRGB(30, 8, 8) or Color3.new(0, 0, 0))
+		Lighting.Ambient = ambient
+		Lighting.OutdoorAmbient = ambient
+		Lighting.Brightness = 0 -- the sun and moon would light the cave through the rock
 		Lighting.EnvironmentDiffuseScale = 0
-		Lighting.EnvironmentSpecularScale = 0.1
-		Lighting.FogColor = monster and Color3.fromRGB(20, 4, 4) or Color3.fromRGB(5, 5, 7)
+		Lighting.EnvironmentSpecularScale = 0
 		Lighting.FogStart = 0
-		Lighting.FogEnd = monster and 180 or 90
-		if atmosphere then -- with an Atmosphere, Roblox ignores the Fog settings, so darken it instead
+		Lighting.FogEnd = 100000 -- no fog
+		if atmosphere then -- an Atmosphere glows like daylight haze even inside the cave: switch it off
 			saved.atmosphere = {
 				Density = atmosphere.Density,
 				Offset = atmosphere.Offset,
-				Color = atmosphere.Color,
-				Decay = atmosphere.Decay,
 				Glare = atmosphere.Glare,
 				Haze = atmosphere.Haze,
 			}
-			atmosphere.Density = monster and 0.35 or 0.62
+			atmosphere.Density = 0
 			atmosphere.Offset = 0
-			atmosphere.Color = monster and Color3.fromRGB(40, 8, 8) or Color3.fromRGB(14, 14, 18)
-			atmosphere.Decay = monster and Color3.fromRGB(20, 4, 4) or Color3.fromRGB(8, 8, 10)
 			atmosphere.Glare = 0
 			atmosphere.Haze = 0
 		end
-		grade.Contrast = 0.18
-		grade.Saturation = monster and -0.7 or -0.4
-		grade.Brightness = -0.02
-		grade.TintColor = monster and Color3.fromRGB(255, 200, 200) or Color3.fromRGB(222, 230, 255)
+		grade.Contrast = seeing and 0.25 or 0.15
+		grade.Saturation = seeing and -1 or (monster and -0.7 or -0.4)
+		grade.Brightness = seeing and 0.05 or -0.05
+		grade.TintColor = seeing and Color3.fromRGB(140, 255, 150) or (monster and Color3.fromRGB(255, 200, 200) or Color3.fromRGB(222, 230, 255))
 	end
 	grade.Enabled = on
 	bloom.Enabled = on
@@ -2322,6 +2416,18 @@ player:GetAttributeChangedSignal("Role"):Connect(function()
 		setCaveMood(true) -- switch between hider and monster vision
 	end
 end)
+ContextActionService:BindAction("CaveHunt_NightVision", function(_, state)
+	if not isMonster() then
+		return Enum.ContextActionResult.Pass
+	end
+	if state == Enum.UserInputState.Begin then
+		nightVision = not nightVision
+		if inCave then
+			setCaveMood(true)
+		end
+	end
+	return Enum.ContextActionResult.Sink
+end, false, Enum.KeyCode.N)
 task.spawn(function()
 	while true do
 		task.wait(0.5)
@@ -2716,8 +2822,57 @@ for i, item in ipairs(SHOP_ITEMS) do
 	table.insert(ITEMS, item)
 end
 
+-- Your monster model. If ServerStorage doesn't have one yet, find it in Workspace and move it there:
+-- a model with "monster" in its name, or else a character model (one with a Humanoid, like the NPCs
+-- from the Toolbox), the tallest if there are several. Returns a line for the Output.
+local function adoptMonster()
+	local ServerStorage = game:GetService("ServerStorage")
+	local named = ServerStorage:FindFirstChild("Monster")
+	if named and named:IsA("Model") then
+		return "Your monster: ServerStorage.Monster."
+	end
+	for _, d in ipairs(ServerStorage:GetChildren()) do
+		if d:IsA("Model") and d:GetAttribute("CaveHuntMonster") then
+			return ("Your monster: ServerStorage.%s."):format(d.Name)
+		end
+	end
+	local best, bestScore, bestHeight
+	local function consider(m)
+		local name = m.Name:lower()
+		local score = (name:find("monster") and 4 or 0) + (m:FindFirstChildOfClass("Humanoid") and 2 or 0) + (m:FindFirstChild("HumanoidRootPart") and 1 or 0)
+		if name == "rig" or name == "dummy" then
+			score -= 1 -- probably a test dummy
+		end
+		if score >= 2 then
+			local height = m:GetExtentsSize().Y
+			if not best or score > bestScore or (score == bestScore and height > bestHeight) then
+				best, bestScore, bestHeight = m, score, height
+			end
+		end
+	end
+	local function scan(parent)
+		for _, c in ipairs(parent:GetChildren()) do
+			if c:IsA("Model") and c.Name ~= "CaveSystem" then
+				consider(c)
+			elseif c:IsA("Folder") and c.Name ~= "CaveSystem" then
+				scan(c)
+			end
+		end
+	end
+	scan(workspace)
+	if not best then
+		return "No monster model found, so the monster is your own character in black with red eyes. To use yours, put it in ServerStorage, name it Monster and run this again."
+	end
+	local from = best:GetFullName()
+	best.Parent = ServerStorage
+	best:SetAttribute("CaveHuntMonster", true)
+	return ("Your monster: %s. Moved it from %s to ServerStorage so whoever is the monster plays as it. Wrong model? Drag it back, put the right one in ServerStorage named Monster, and run this again."):format(best.Name, from)
+end
+
 local function run()
+	local monsterNote = ""
 	local ok, err = pcall(function()
+		monsterNote = adoptMonster()
 		local ServerScriptService = game:GetService("ServerScriptService")
 		local ServerStorage = game:GetService("ServerStorage")
 		local items = ServerStorage:FindFirstChild("CaveHunt_Tools")
@@ -2775,6 +2930,7 @@ local function run()
 		warn("[GameScripts] Something went wrong. Copy this message and send it to Claude:\n" .. tostring(err))
 		return false
 	end
+	print("[GameScripts] " .. monsterNote)
 	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities, rounds with spectating, admin commands (Admin button or ;help in chat), the troll shop (Shop button or B), and the cave mood. Press Play to try them.")
 	return true
 end

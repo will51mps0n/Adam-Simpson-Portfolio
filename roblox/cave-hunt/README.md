@@ -76,13 +76,19 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Spawn and speed:** it spawns at the far end of the Great Cavern, the Old Mine or the Crystal Grotto. Speed is 26, against the hiders' 16.
 - **Killing:** touching a hider who isn't hiding kills them.
 - **Searching:** pressing **E** ("Search") on a hiding spot throws whoever is inside out.
-- **Vision:** no flashlight, but a dim red night vision.
+- **Vision:** no flashlight. Instead it has green night vision that shows the whole cave. **N** switches it off and on (off is a dim red view).
 - **Hotbar abilities:**
   1. **Leap** (6s): a big lunge forward and up.
   2. **Sense** (15s): for 4 seconds, every hider is outlined through walls and occupied hiding spots glow.
   3. **Scent** (20s): for 8 seconds, a glowing trail shows where each hider walked in the last 30 seconds.
   4. **Roar** (25s): hiders within 140 studs get their screen shaken and their lights knocked out for 5 seconds.
-- **Look:** by default your own character turns into a tall black creature with red eyes. To use your own monster model instead, put it in **ServerStorage** and name it `Monster`. It needs a `Humanoid` and a `HumanoidRootPart`.
+- **Look: your monster model.** `GameScripts` looks in Workspace for it: a model with "monster" in its name, or else a character model (one with a `Humanoid`, like your Smiler). It moves the model to **ServerStorage** and says so in the Output. To pick a different one, put it in ServerStorage, name it `Monster`, and run the command again.
+  - **A rigged character** (`Humanoid` + `HumanoidRootPart`): whoever is the monster plays as it.
+    - Its own scripts (AI, chasing) are switched off.
+    - **Animations:** animations made by another creator won't load in your game (that's the "not authorized" errors). So if it's built like a normal Roblox character, it gets Roblox's standard walk and run animations. To keep its own, give the model a `KeepAnimations` attribute set to true.
+  - **Any other model:** the monster's character wears it like a costume: welded on, with the player's own body hidden.
+  - **Size:** taller than 11 studs gets shrunk to fit the tunnels (`MONSTER_MAX_HEIGHT` at the top of `CaveHunt_Players`).
+  - **No model found:** the monster is your own character in black with red eyes.
 
 **How hotbar items work:** pick one (its number key, or click its slot) and it's used straight away. While it recharges, its slot counts down the seconds.
 
@@ -145,7 +151,7 @@ The cave is a block of rock (720 × 200 × 720 studs) in the middle of your Base
 **The mood:**
 - **Lighting:** very few lights, all dim. The rock is darker and looks wetter.
 - **Dust:** floating dust only shows up in your flashlight beam.
-- **Inside the cave only:** `GameScripts` makes it near-black, foggy and washed out while you're in the cave, and puts it back to normal when you leave. In Studio's edit mode the cave stays visible so you can build.
+- **Inside the cave only:** no fog, and no sun, sky or ambient light. Hiders only see what a light shines on: flashlights, the lanterns at Base Camp, and glowing crystals. The monster sees with night vision. Everything goes back to normal when you leave the cave. In Studio's edit mode the cave stays visible so you can build.
 
 ## Your models
 
@@ -153,7 +159,7 @@ The first time `PlaceAssets` runs, it picks up the models in your Workspace (inc
 
 - **Hiding**: names like Closet, Hiding Spot, Locker, Minecart, Crate, Shelf or Container, or anything in a folder named like that. Models just called "Model" go here if they're at least 5 studs tall and no more than 30 across. Copies get the `HidingSpot` tag, so **E** works on them.
 - **Decor**: names like Light, Crystal, Fire or Lamp, and everything else, including your big room.
-- **Left alone**: the Baseplate, SpawnLocations, flat parts, and anything with a Humanoid or "monster" in its name.
+- **Left alone**: the Baseplate, SpawnLocations, flat parts, and anything with a Humanoid or "monster" in its name. `GameScripts` then picks up your monster from these.
 
 After that first run it only uses CaveAssets. To add more props, drag them into **CaveAssets → Hiding** or **Decor**.
 
