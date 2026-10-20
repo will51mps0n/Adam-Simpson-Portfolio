@@ -1,0 +1,63 @@
+--!strict
+-- Test level for mines, zap drones, the floor guard and thwumps: stacked corridors, each
+-- with its own enemy. Climb up through the gaps at alternating ends, hit the exit switch
+-- at the top, then make your way back down to the exit door by the start.
+
+return {
+	id = "test_drones",
+	name = "Drones & Mines",
+	mode = "test",
+	order = 4,
+	grid = [[
+		...............................
+		..............##...............
+		..............##...............
+		...............................
+		...############################
+		...............................
+		...............................
+		############################...
+		...............................
+		...............................
+		...############################
+		...............................
+		...............................
+		############################...
+		...............................
+		...............................
+		...############################
+		...............................
+		...............................
+		############################...
+		...............................
+		...............................
+		###############################
+	]],
+	objects = {
+		{ type = "spawn", x = 1, y = 21 },
+		{ type = "exitDoor", x = 4, y = 21 },
+		{ type = "mine", x = 9, y = 21 },
+		{ type = "mine", x = 14, y = 21 },
+		{ type = "mine", x = 19, y = 21 },
+		{ type = "mine", x = 24, y = 21 },
+		{ type = "gold", x = 11.5, y = 20 },
+		{ type = "gold", x = 16.5, y = 20 },
+		{ type = "gold", x = 21.5, y = 20 },
+		{ type = "floorGuard", x = 14, y = 18 },
+		{ type = "gold", x = 6, y = 17 },
+		{ type = "thwump", x = 10, y = 14, dir = "down" },
+		{ type = "thwump", x = 20, y = 14, dir = "down" },
+		{ type = "gold", x = 20, y = 15 },
+		{ type = "zapDrone", x = 8, y = 12, move = "bounce", dir = "right" },
+		{ type = "zapDrone", x = 22, y = 11, move = "path", path = { { x = 22, y = 11 }, { x = 26, y = 11 }, { x = 26, y = 12 }, { x = 22, y = 12 } } },
+		{ type = "gold", x = 15, y = 11 },
+		{ type = "zapDrone", x = 28, y = 9, move = "bounce", dir = "left", seeker = true },
+		{ type = "gold", x = 16, y = 9 },
+		{ type = "zapDrone", x = 20, y = 6, move = "bounce", dir = "left" },
+		{ type = "gold", x = 10, y = 5 },
+		{ type = "zapDrone", x = 13, y = 1, move = "ccw", dir = "up" },
+		{ type = "zapDrone", x = 16, y = 2, move = "cw", dir = "up" },
+		{ type = "exitSwitch", x = 26, y = 3 },
+		{ type = "gold", x = 29, y = 0 },
+	},
+}

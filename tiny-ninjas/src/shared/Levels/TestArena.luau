@@ -1,6 +1,7 @@
 --!strict
 -- A big 64 x 36 test arena (about two screens wide), used to try the follow camera.
 -- Larger than one screen, so the camera follows the players instead of showing it all.
+-- The exit switch is on the middle platform; the exit door is on top of the hill.
 
 return {
 	id = "test_arena",
@@ -49,5 +50,16 @@ return {
 	objects = {
 		{ type = "spawn", x = 10, y = 34 },
 		{ type = "spawn", x = 53, y = 34 },
+		{ type = "gold", x = 1, y = 20 }, -- in the wall-jump shafts
+		{ type = "gold", x = 62, y = 20 },
+		{ type = "gold", x = 15.5, y = 23 },
+		{ type = "gold", x = 47.5, y = 23 },
+		{ type = "gold", x = 14.5, y = 9 },
+		{ type = "gold", x = 48.5, y = 9 },
+		{ type = "gold", x = 22.5, y = 11 },
+		{ type = "gold", x = 41.5, y = 11 },
+		{ type = "gold", x = 31.5, y = 3 },
+		{ type = "exitSwitch", x = 31, y = 17 },
+		{ type = "exitDoor", x = 31, y = 29 },
 	},
 }

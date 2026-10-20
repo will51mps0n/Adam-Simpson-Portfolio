@@ -3,7 +3,8 @@
 -- Row 3 shows each slope and curve on its own: / \ F 7, then q w a s, then Q W A S.
 -- Below that the same shapes are used the way real levels use them: a platform and a
 -- block with rounded corners, a round pillar, a round hole, a ramp, a hill, beveled
--- undersides and quarter-pipes in the corners.
+-- undersides and quarter-pipes in the corners. The exit switch is on the long platform
+-- in the middle; the exit door is up the ramp on the right.
 
 return {
 	id = "test_shapes",
@@ -37,5 +38,14 @@ return {
 	]],
 	objects = {
 		{ type = "spawn", x = 6, y = 21 },
+		{ type = "gold", x = 1, y = 17 }, -- up the wall-jump shaft
+		{ type = "gold", x = 1, y = 13 },
+		{ type = "gold", x = 5, y = 6 }, -- on the rounded platform
+		{ type = "gold", x = 14.5, y = 6 }, -- on top of the round pillar
+		{ type = "gold", x = 15, y = 20 }, -- on the hill
+		{ type = "gold", x = 24, y = 5 }, -- on the block with the hole
+		{ type = "gold", x = 29, y = 2 },
+		{ type = "exitSwitch", x = 15, y = 11 },
+		{ type = "exitDoor", x = 27, y = 17 },
 	},
 }
