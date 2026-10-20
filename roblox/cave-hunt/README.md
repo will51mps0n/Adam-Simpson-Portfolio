@@ -103,7 +103,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Vision:** no flashlight. Instead it has bright green night vision that shows the whole cave, plus a light around the monster that only the monster sees. **N** switches it off and on (off is a dim red view).
 - **Hotbar abilities:**
   1. **Leap** (6s): a big lunge forward and up.
-  2. **Sense** (15s): for 4 seconds, every hider is outlined through walls and occupied hiding spots glow.
+  2. **Sense** (15s): for 4 seconds, a red smudge on a ring round the middle of the screen hints which way each hider is. It's rough, give or take 25 degrees, and doesn't show exactly where they are. Closer hiders give a bigger, brighter smudge.
   3. **Scent** (20s): for 8 seconds, a glowing trail shows where each hider walked in the last 30 seconds.
   4. **Roar** (25s): hiders within 140 studs get their screen shaken and their lights knocked out for 5 seconds.
 - **Look: your monster model.** `GameScripts` looks in Workspace for it: a model with "monster" in its name, or else a character model (one with a `Humanoid`, like your Smiler). It moves the model to **ServerStorage** and says so in the Output. To pick a different one, put it in ServerStorage, name it `Monster`, and run the command again.
@@ -163,7 +163,7 @@ Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` at the top of `ServerSc
 | **Swap** | 35 | hiders | Pick a hider who isn't hiding, and you swap places. |
 | **Banana Peel** | 15 | anyone | Drops a peel at your feet. The next person to step on it (not you) sits down and can't move for 2 seconds. |
 | **Air Horn** | 10 | anyone | HONK. Shakes the screen of everyone within 60 studs, and the monster hears it from far away. |
-| **Fake Hider** | 20 | hiders | The nearest empty hiding spot shows up as taken in the monster's Sense for 60 seconds. If the monster searches it, they're told it was a decoy. |
+| **Fake Hider** | 20 | hiders | For 60 seconds the monster's Sense also points toward the nearest empty hiding spot, as if someone were in it. If the monster searches it, they're told it was a decoy. |
 
 Except for Snitch and Fake Noise, items can't be used while you're hiding.
 

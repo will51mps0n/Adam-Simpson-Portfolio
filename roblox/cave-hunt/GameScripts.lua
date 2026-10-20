@@ -1411,7 +1411,7 @@ function EFFECTS.AirHorn(player)
 	return true
 end
 
--- Fake Hider: the nearest empty hiding spot shows up as taken in the monster's Sense for 60 seconds
+-- Fake Hider: the monster's Sense points toward the nearest empty hiding spot for 60 seconds, as if someone were in it
 local decoys = {}
 function EFFECTS.FakeHider(player)
 	local _, _, root = alive(player)
@@ -1431,7 +1431,7 @@ function EFFECTS.FakeHider(player)
 			spot:SetAttribute("FakeOccupied", nil)
 		end
 	end)
-	notify:FireClient(player, "Decoy set: the monster's Sense shows someone in that " .. tostring(spot:GetAttribute("HideType") or "spot") .. " for 60s.")
+	notify:FireClient(player, "Decoy set: for 60s the monster's Sense also points toward that " .. tostring(spot:GetAttribute("HideType") or "spot") .. ".")
 	return true
 end
 
@@ -3266,35 +3266,76 @@ end)
 	},
 	{
 		name = "Sense",
-		tip = "See hiders through walls for 4s (15s)",
+		tip = "Sense which way the hiders are for 4s: a rough direction, not where exactly (15s)",
 		source = [==[
+-- Not a location, just a hint: a soft red smudge on a ring round the middle of the screen, roughly
+-- (give or take 25 degrees) in the direction of each hider. Closer hiders give a bigger, brighter one.
+-- A Fake Hider from the shop shows up here too.
 local CollectionService = game:GetService("CollectionService")
-onUse(function()
-	local made = {}
-	local function glow(target, color)
-		local h = Instance.new("Highlight")
-		h.FillColor = color
-		h.OutlineColor = color
-		h.FillTransparency = 0.55
-		h.OutlineTransparency = 0
-		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		h.Adornee = target
-		h.Parent = target
-		table.insert(made, h)
+local RunService = game:GetService("RunService")
+local SECONDS = 4
+onUse(function(character)
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return
 	end
+	local targets = {}
 	for _, other in ipairs(Players:GetPlayers()) do
-		if other ~= player and other:GetAttribute("Role") ~= "Monster" and other.Character and not other:GetAttribute("Hidden") then
-			glow(other.Character, Color3.fromRGB(255, 50, 40))
+		local otherRoot = other ~= player and other:GetAttribute("Role") == "Hider" and other.Character and other.Character:FindFirstChild("HumanoidRootPart")
+		if otherRoot then
+			table.insert(targets, otherRoot.Position)
 		end
 	end
 	for _, spot in ipairs(CollectionService:GetTagged("HidingSpot")) do
-		if spot:GetAttribute("Occupied") or spot:GetAttribute("FakeOccupied") then
-			glow(spot, Color3.fromRGB(255, 190, 40)) -- someone is in there (or a Fake Hider from the shop)
+		if spot:GetAttribute("FakeOccupied") then
+			table.insert(targets, spot:GetPivot().Position)
 		end
 	end
-	task.delay(4, function()
-		for _, h in ipairs(made) do
-			h:Destroy()
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "CaveHunt_Sense"
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	local hints = {}
+	for _, pos in ipairs(targets) do
+		local flat = Vector3.new(pos.X - root.Position.X, 0, pos.Z - root.Position.Z)
+		local distance = flat.Magnitude
+		local blob = Instance.new("Frame")
+		local size = distance < 60 and 90 or (distance < 150 and 60 or 40)
+		blob.AnchorPoint = Vector2.new(0.5, 0.5)
+		blob.Size = UDim2.fromOffset(size, size)
+		blob.BackgroundColor3 = Color3.fromRGB(255, 40, 30)
+		blob.BorderSizePixel = 0
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0.5, 0)
+		corner.Parent = blob
+		local fade = Instance.new("UIGradient") -- soft edges
+		fade.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.9),
+			NumberSequenceKeypoint.new(0.5, distance < 60 and 0.25 or 0.5),
+			NumberSequenceKeypoint.new(1, 0.9),
+		})
+		fade.Parent = blob
+		blob.Parent = gui
+		local heading = math.atan2(flat.X, -flat.Z) + math.rad(math.random(-25, 25))
+		table.insert(hints, { blob = blob, heading = heading })
+	end
+	gui.Parent = player:WaitForChild("PlayerGui")
+	local started = os.clock()
+	local connection
+	connection = RunService.RenderStepped:Connect(function()
+		local age = os.clock() - started
+		if age > SECONDS or not gui.Parent then
+			connection:Disconnect()
+			gui:Destroy()
+			return
+		end
+		local look = workspace.CurrentCamera.CFrame.LookVector
+		local facing = math.atan2(look.X, -look.Z)
+		local radius = math.min(workspace.CurrentCamera.ViewportSize.X, workspace.CurrentCamera.ViewportSize.Y) * 0.3
+		for _, h in ipairs(hints) do
+			local rel = h.heading - facing -- 0 = straight ahead (top of the ring)
+			h.blob.Position = UDim2.new(0.5, math.sin(rel) * radius, 0.5, -math.cos(rel) * radius)
+			h.blob.BackgroundTransparency = math.clamp((age - (SECONDS - 1)) / 1, 0, 1) -- fades out in the last second
 		end
 	end)
 	cooldown(15)
@@ -3471,7 +3512,7 @@ end)
 	},
 	{ key = "Banana", name = "Banana Peel", price = 15, who = "Any", tip = "Drop a peel at your feet. The next person to step on it slips for 2s", source = USE_NOW },
 	{ key = "AirHorn", name = "Air Horn", price = 10, who = "Any", tip = "HONK. Shakes everyone within 60 studs, and the monster hears it from far away", source = USE_NOW },
-	{ key = "FakeHider", name = "Fake Hider", price = 20, who = "Hider", tip = "The nearest empty hiding spot shows up as taken in the monster's Sense for 60s", source = USE_NOW },
+	{ key = "FakeHider", name = "Fake Hider", price = 20, who = "Hider", tip = "For 60s the monster's Sense also points toward the nearest empty hiding spot", source = USE_NOW },
 }
 for i, item in ipairs(SHOP_ITEMS) do
 	item.order = i
