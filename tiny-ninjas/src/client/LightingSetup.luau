@@ -16,6 +16,15 @@ function LightingSetup.apply()
 	Lighting.EnvironmentSpecularScale = settings.EnvironmentSpecularScale
 	Lighting.ExposureCompensation = settings.ExposureCompensation
 	Lighting.GlobalShadows = settings.GlobalShadows
+
+	-- Studio templates add haze and glow effects that would tint the flat grey look.
+	for _, child in Lighting:GetChildren() do
+		if child:IsA("PostEffect") then
+			child.Enabled = false
+		elseif child:IsA("Atmosphere") then
+			child:Destroy()
+		end
+	end
 end
 
 return LightingSetup

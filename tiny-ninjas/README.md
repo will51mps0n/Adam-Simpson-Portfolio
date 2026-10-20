@@ -4,7 +4,22 @@ A multiplayer Roblox platformer that plays like the classic Flash game N:
 one-screen levels, momentum physics, wall jumps, and ninjas that can bump into each other.
 Everything is generated from code with [Rojo](https://rojo.space).
 
-## Build it
+## Install it from Studio (no tools needed)
+
+1. In Roblox Studio, open a new Baseplate place (or your saved Tiny Ninjas place).
+2. Open View > Command Bar, paste the install command, and press Enter.
+3. Press Play to test, and File > Save to keep it.
+
+The install command, with `COMMIT` replaced by the commit to install (each milestone message gives a ready-made one):
+
+```lua
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/COMMIT/tiny-ninjas/studio/install.luau",true) require(M)()
+```
+
+It replaces the game's scripts in the place, removes Studio's default haze and glow effects, and turns HTTP back off.
+`studio/install.luau` is generated: after changing any code, run `python3 tools/build_installer.py`.
+
+## Or build it with Rojo
 
 1. Install [Rokit](https://github.com/rojo-rbx/rokit), then run `rokit install` in this folder (it installs the Rojo version listed in `rokit.toml`).
 2. Run `rojo build -o TinyNinjas.rbxlx`.
