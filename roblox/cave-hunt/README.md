@@ -13,7 +13,7 @@ Studio scripts for an asymmetric hide-and-seek game: one player is the monster a
 Paste this into the **Command Bar**, press Return, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/30f45fb094d69deba6f2283acba73566d0e85c1b/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/e8abab25b8345bb6934356a641cdbd0d6af6bf32/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
 ```
 
 It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=true` rebuilds the cave if one is already there. It also turns on **Allow HTTP Requests** for the place, which the download needs. Studio freezes for 10–30 seconds while the terrain is carved.
