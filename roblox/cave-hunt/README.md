@@ -40,7 +40,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 
 **Admin commands**
 - **Who's an admin:** in Studio, everyone. In a published game: the game's owner (or rank 255 of the owning group), plus anyone you add to `ADMINS` at the top of `ServerScriptService.CaveHunt_Rounds`, e.g. `local ADMINS = { 12345678, "MyFriend" }`.
-- **Admin panel:** admins get an **Admin** button under the Shop button. It has Restart round, Make me the monster, Make me a hider, Spectate, Stop rounds, and a list of players to make the monster.
+- **Admin panel:** admins get an **Admin** button under the Shop button, or press **P**. It has Restart round, Make me the monster, Make me a hider, Spectate, Stop rounds, and a list of players to make the monster.
 - **Chat commands:** the same things work typed in chat. Names can be shortened (`;monster bo` finds Bob):
 
 | Command | What it does |
@@ -68,10 +68,12 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 
 **Hiders**
 - **Your character:** the plain blocky Roblox body at the standard size, with your own head, face, hair, hats, skin colors and clothes.
-- **Camera:** hiders are locked in first person.
-- **Flashlight:** **F**, or the **Flashlight** item in slot 1, switches it on and off. It starts on.
+- **Camera:** hiders are locked in first person, with a small dot in the middle of the screen instead of the mouse pointer.
+  - **Menus:** the pointer comes back while a menu is open: the shop (**B**), the Admin panel (**P**) and the phone list.
+- **Flashlight:** **F**, or the item in slot 1, switches it on and off. The slot says **Light: ON** or **Light: OFF**, and it stays that way until you switch it again. It starts on.
   - **Tracking:** the beam follows where you look, up and down too, and other players see it sweep around.
-  - **Range:** it reaches 60 studs (the most Roblox lights can), with a soft glow around you so the ground at your feet shows.
+  - **Range:** it reaches 60 studs (the most Roblox lights can).
+  - **Glow:** while it's on, there's a faint glow at your feet that only you see. Other players don't see you glowing.
   - **Flashlight tools:** a flashlight Tool in StarterPack (like your Advanced Flashlight) is taken out of hiders' hotbars, because a held tool's beam can't follow where you look.
 - **Without a light:** the cave is very dark, but not pitch black. Rock and shapes are just visible (`CAVE_AMBIENT` at the top of `StarterPlayerScripts.CaveHunt_Client`).
 - **Hiding (E):** walk up to any hiding spot and press **E** to hide inside it. You go invisible, your tools are put away and your light switches off. Press **E** again to come out.

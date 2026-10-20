@@ -170,13 +170,6 @@ local function addFlashlight(character)
 	beam.Color = LIGHT
 	beam.Shadows = true
 	beam.Parent = mount
-
-	local spill = Instance.new("PointLight") -- a soft glow around you, so the ground at your feet shows
-	spill.Name = "Spill"
-	spill.Range = 12
-	spill.Brightness = 0.6
-	spill.Color = LIGHT
-	spill.Parent = mount
 end
 
 -- the client's movement script reads these (sprinting and crouching happen on the client)
@@ -202,6 +195,7 @@ local function setupHider(player, character)
 	player.CameraMode = Enum.CameraMode.LockFirstPerson -- hiders see through their own eyes
 	player.CameraMinZoomDistance = 0.5
 	addFlashlight(character) -- after the new look, because that can replace the head
+	player:SetAttribute("FlashlightOn", true)
 	for _, holder in ipairs({ player:FindFirstChildOfClass("Backpack"), character }) do
 		for _, tool in ipairs(holder and holder:GetChildren() or {}) do
 			if isOtherFlashlight(tool) then
@@ -230,7 +224,7 @@ toggleLight.OnServerEvent:Connect(function(player)
 	if mount and not player:GetAttribute("Hidden") then
 		local on = not mount.Beam.Enabled
 		mount.Beam.Enabled = on
-		mount.Spill.Enabled = on
+		player:SetAttribute("FlashlightOn", on) -- the hotbar shows Light: ON / OFF
 	end
 end)
 
@@ -1934,6 +1928,42 @@ local function clock(seconds)
 	return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
 end
 local cameraShake = Vector3.new() -- the roar / air horn shake, added to the camera by the movement code
+local menusOpen = {} -- the shop and admin panels note when they're open (the mouse is free then)
+
+-- First person: a small dot in the middle of the screen instead of the mouse pointer. While a menu
+-- is open (Shop, Admin, the phone list) the pointer comes back and the mouse is free.
+-- Your flashlight also puts a faint glow at your feet that only you see (nobody else sees you glow).
+local UserInputService = game:GetService("UserInputService")
+task.spawn(function()
+	local playerGui = player:WaitForChild("PlayerGui")
+	local gui = make("ScreenGui", playerGui, { Name = "CaveHunt_Crosshair", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 3 })
+	local dot = make("Frame", gui, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(5, 5),
+		BackgroundTransparency = 0.15,
+		BackgroundColor3 = Color3.fromRGB(235, 235, 235),
+	})
+	round(dot, 99)
+	RunService.RenderStepped:Connect(function()
+		local firstPerson = player.CameraMode == Enum.CameraMode.LockFirstPerson and player.Character ~= nil
+		local menu = menusOpen.shop or menusOpen.admin or playerGui:FindFirstChild("CaveHunt_Picker") ~= nil
+		dot.Visible = firstPerson and not menu
+		UserInputService.MouseIconEnabled = not (firstPerson and not menu)
+		-- your own faint glow
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local head = character and character:FindFirstChild("Head")
+		local beam = head and head:FindFirstChild("Flashlight") and head.Flashlight:FindFirstChild("Beam")
+		if root then
+			local glow = root:FindFirstChild("CaveHunt_MyGlow")
+			if not glow then
+				glow = make("PointLight", root, { Name = "CaveHunt_MyGlow", Range = 9, Brightness = 0.35, Color = Color3.fromRGB(255, 238, 210), Shadows = false })
+			end
+			glow.Enabled = beam ~= nil and beam.Enabled and not player:GetAttribute("Hidden")
+		end
+	end)
+end)
 
 -- Movement: hold Shift to sprint (it uses stamina, and stands you up), C to crouch and sneak (slow and quiet). The
 -- speeds come from the server (attributes on your character); stamina is kept here. Phones get
@@ -2096,7 +2126,7 @@ task.spawn(function()
 		LineHeight = 1.25,
 	})
 	local CONTROLS = {
-		Hider = "Sprint : [Shift]\nCrouch : [C]\nFlashlight : [F]\nHide : [E]\nShop : [B]",
+		Hider = "Flashlight : [F]\nSprint : [Shift]\nCrouch : [C]\nHide : [E]\nShop : [B]",
 		Monster = "Punch : [LMB]\nSprint : [Shift]\nCrouch : [C]\nSearch : [E]\nNight vision : [N]\nAbilities : [1-4]",
 		Spectator = "Next : [E]\nPrevious : [Q]",
 	}
@@ -2119,7 +2149,7 @@ task.spawn(function()
 		end
 		status.Text = player:GetAttribute("Hidden") and "HIDDEN" or (move.crouching and "CROUCHING" or (move.sprinting and "RUNNING" or ""))
 		status.TextColor3 = color
-		controls.Text = CONTROLS[r] or CONTROLS.Hider
+		controls.Text = (CONTROLS[r] or CONTROLS.Hider) .. (player:GetAttribute("IsAdmin") and "\nAdmin : [P]" or "")
 		controls.TextColor3 = color
 		local look = workspace.CurrentCamera.CFrame.LookVector
 		local heading = math.deg(math.atan2(look.X, -look.Z)) % 360 -- 0 = north (-Z)
@@ -2484,7 +2514,7 @@ task.spawn(function()
 			admin:FireServer(verb, arg)
 		end
 	end
-	add("Restart round (random monster)", Color3.fromRGB(46, 100, 60), send("restart"))
+	add("Restart round (random monster)", Color3.fromRGB(46, 100, 60), send("restart")).Modal = true -- frees the mouse in first person while the panel is open
 	add("Make me the monster", Color3.fromRGB(110, 30, 30), send("monster"))
 	add("Make me a hider", nil, send("hider"))
 	add("Spectate", nil, send("spectate"))
@@ -2506,12 +2536,20 @@ task.spawn(function()
 		help.Size = UDim2.new(1, 0, 0, 36)
 		table.insert(playerButtons, help)
 	end
-	open.Activated:Connect(function()
+	local function toggle()
 		panel.Visible = not panel.Visible
+		menusOpen.admin = panel.Visible
 		if panel.Visible then
 			refreshPlayers()
 		end
-	end)
+	end
+	open.Activated:Connect(toggle)
+	ContextActionService:BindAction("CaveHunt_AdminPanel", function(_, state)
+		if state == Enum.UserInputState.Begin then
+			toggle()
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.KeyCode.P)
 end)
 
 -- messages at the top of the screen ("Bob is calling you!"), the screen shake (the monster's
@@ -2728,8 +2766,10 @@ task.spawn(function()
 		end)
 	end
 
+	close.Modal = true -- while the shop is open the mouse is free, even in first person
 	local function setOpen(on)
 		panel.Visible = on
+		menusOpen.shop = on
 		if on then
 			status.Text = "Bought items go in your hotbar. Each use spends one."
 			refresh()
@@ -3077,6 +3117,15 @@ local function pickPlayer(title, wanted, onPick)
 	row("Cancel", Color3.fromRGB(90, 30, 30), #people + 1, function()
 		picker:Destroy()
 	end)
+	local cancel = frame:FindFirstChild("TextButton")
+	for _, b in ipairs(frame:GetChildren()) do
+		if b:IsA("TextButton") then
+			cancel = b
+		end
+	end
+	if cancel then
+		cancel.Modal = true -- frees the mouse in first person while the list is open
+	end
 	picker.Parent = playerGui
 end
 
@@ -3213,12 +3262,16 @@ end)
 	},
 	{
 		name = "Flashlight",
-		tip = "Switch your flashlight on or off (or press F)",
+		tip = "Switch your flashlight on or off (or press F). It stays that way until you switch it again",
 		source = [==[
 local toggle = ReplicatedStorage:WaitForChild("CaveHunt_ToggleFlashlight")
+local function show()
+	tool.Name = player:GetAttribute("FlashlightOn") == false and "Light: OFF" or "Light: ON"
+end
+player:GetAttributeChangedSignal("FlashlightOn"):Connect(show)
+show()
 onUse(function()
 	toggle:FireServer()
-	cooldown(0.3)
 end)
 ]==],
 	},
