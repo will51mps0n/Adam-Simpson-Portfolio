@@ -309,94 +309,99 @@ local function run(options)
 			return a.footprint > b.footprint
 		end)
 
-		local placed, failed = {}, {}
+		local placed, failed, errors = {}, {}, {}
 		for _, job in ipairs(jobs) do
-			-- free spots it fits in, preferring snug ones so the big spots stay free for big models
-			local fits, snug = {}, math.huge
-			for _, s in ipairs(spots) do
-				if job.footprint <= s.footprint and job.height <= s.height then
-					table.insert(fits, s)
-					snug = math.min(snug, s.footprint)
+			local ok, err = pcall(function()
+				-- free spots it fits in, preferring snug ones so the big spots stay free for big models
+				local fits, snug = {}, math.huge
+				for _, s in ipairs(spots) do
+					if job.footprint <= s.footprint and job.height <= s.height then
+						table.insert(fits, s)
+						snug = math.min(snug, s.footprint)
+					end
 				end
-			end
-			local choices = {}
-			for _, s in ipairs(fits) do
-				if s.footprint <= snug * 1.6 + 4 then
-					table.insert(choices, s)
+				local choices = {}
+				for _, s in ipairs(fits) do
+					if s.footprint <= snug * 1.6 + 4 then
+						table.insert(choices, s)
+					end
 				end
-			end
-			if #choices == 0 then
-				failed[job.name] = failed[job.name] or { job = job, n = 0 }
-				failed[job.name].n += 1
-			else
-				local spot = choices[rng:NextInteger(1, #choices)]
-				local at, look = spot.pos, spot.look
-				if spot.footprint >= job.footprint * 2 then
-					-- small model in a big spot: tuck it against the wall side of the spot and
-					-- keep the rest of the spot free for more models
-					local a = rng:NextNumber(-0.9, 0.9)
-					local back = -look
-					back = Vector3.new(back.X * math.cos(a) - back.Z * math.sin(a), 0, back.X * math.sin(a) + back.Z * math.cos(a))
-					at = spot.pos + back * ((spot.footprint - job.footprint) / 2)
-					spot.pos = spot.pos - back * ((job.footprint + 1) / 2)
-					spot.footprint -= job.footprint + 1
+				if #choices == 0 then
+					failed[job.name] = failed[job.name] or { job = job, n = 0 }
+					failed[job.name].n += 1
 				else
-					spot.footprint = 0 -- used up
-				end
+					local spot = choices[rng:NextInteger(1, #choices)]
+					local at, look = spot.pos, spot.look
+					if spot.footprint >= job.footprint * 2 then
+						-- small model in a big spot: tuck it against the wall side of the spot and
+						-- keep the rest of the spot free for more models
+						local a = rng:NextNumber(-0.9, 0.9)
+						local back = -look
+						back = Vector3.new(back.X * math.cos(a) - back.Z * math.sin(a), 0, back.X * math.sin(a) + back.Z * math.cos(a))
+						at = spot.pos + back * ((spot.footprint - job.footprint) / 2)
+						spot.pos = spot.pos - back * ((job.footprint + 1) / 2)
+						spot.footprint -= job.footprint + 1
+					else
+						spot.footprint = 0 -- used up
+					end
 
-				local clone = job.asset:Clone()
-				if clone:IsA("BasePart") then -- wrap loose parts so they can hold HidePoint/ExitPoint
-					local m = Instance.new("Model")
-					m.Name = clone.Name
-					clone.Parent = m
-					m.PrimaryPart = clone
-					clone = m
-				end
-				for _, p in ipairs(partsOf(clone)) do
-					p.Anchored = true
-				end
+					local clone = job.asset:Clone()
+					if clone:IsA("BasePart") then -- wrap loose parts so they can hold HidePoint/ExitPoint
+						local m = Instance.new("Model")
+						m.Name = clone.Name
+						clone.Parent = m
+						m.PrimaryPart = clone
+						clone = m
+					end
+					for _, p in ipairs(partsOf(clone)) do
+						p.Anchored = true
+					end
 
-				-- turn it (around world Y only, so it stays upright) so its front faces the
-				-- middle of the room for hiding props, or a random way for decor
-				local pivot = clone:GetPivot()
-				local wantYaw = job.hiding and yawOf(look) or rng:NextNumber(0, math.pi * 2)
-				local turn = wantYaw - yawOf(pivot.LookVector)
-				clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
+					-- turn it (around world Y only, so it stays upright) so its front faces the
+					-- middle of the room for hiding props, or a random way for decor
+					local pivot = clone:GetPivot()
+					local wantYaw = job.hiding and yawOf(look) or rng:NextNumber(0, math.pi * 2)
+					local turn = wantYaw - yawOf(pivot.LookVector)
+					clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
 
-				-- then slide it so its bottom-center sits on the spot
-				local lo, hi = bounds(clone)
-				local center = (lo + hi) / 2
-				clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, at.Y - lo.Y - 0.05, at.Z - center.Z))
+					-- then slide it so its bottom-center sits on the spot
+					local lo, hi = bounds(clone)
+					local center = (lo + hi) / 2
+					clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, at.Y - lo.Y - 0.05, at.Z - center.Z))
 
-				if job.hiding then
-					lo, hi = bounds(clone)
-					local function addPoint(name, pos)
-						if not clone:FindFirstChild(name, true) then
-							local p = Instance.new("Part")
-							p.Name = name
-							p.Anchored = true
-							p.CanCollide = false
-							p.CanQuery = false
-							p.CanTouch = false
-							p.CastShadow = false
-							p.Transparency = 1
-							p.Size = Vector3.new(1, 1, 1)
-							p.CFrame = CFrame.lookAt(pos, pos + look)
-							p.Parent = clone
+					if job.hiding then
+						lo, hi = bounds(clone)
+						local function addPoint(name, pos)
+							if not clone:FindFirstChild(name, true) then
+								local p = Instance.new("Part")
+								p.Name = name
+								p.Anchored = true
+								p.CanCollide = false
+								p.CanQuery = false
+								p.CanTouch = false
+								p.CastShadow = false
+								p.Transparency = 1
+								p.Size = Vector3.new(1, 1, 1)
+								p.CFrame = CFrame.lookAt(pos, pos + look)
+								p.Parent = clone
+							end
 						end
+						local mid = (lo + hi) / 2
+						local halfDepth = math.max(hi.X - lo.X, hi.Z - lo.Z) / 2
+						addPoint("HidePoint", Vector3.new(mid.X, math.min(lo.Y + 3, mid.Y), mid.Z))
+						addPoint("ExitPoint", Vector3.new(mid.X, lo.Y + 3, mid.Z) + look * (halfDepth + 3))
+						if clone:GetAttribute("HideType") == nil then
+							clone:SetAttribute("HideType", job.asset.Name)
+						end
+						clone:SetAttribute("Occupied", false)
+						CollectionService:AddTag(clone, "HidingSpot")
 					end
-					local mid = (lo + hi) / 2
-					local halfDepth = math.max(hi.X - lo.X, hi.Z - lo.Z) / 2
-					addPoint("HidePoint", Vector3.new(mid.X, math.min(lo.Y + 3, mid.Y), mid.Z))
-					addPoint("ExitPoint", Vector3.new(mid.X, lo.Y + 3, mid.Z) + look * (halfDepth + 3))
-					if clone:GetAttribute("HideType") == nil then
-						clone:SetAttribute("HideType", job.asset.Name)
-					end
-					clone:SetAttribute("Occupied", false)
-					CollectionService:AddTag(clone, "HidingSpot")
+					clone.Parent = out
+					placed[job.name] = (placed[job.name] or 0) + 1
 				end
-				clone.Parent = out
-				placed[job.name] = (placed[job.name] or 0) + 1
+			end)
+			if not ok then
+				table.insert(errors, job.name .. ": " .. tostring(err))
 			end
 		end
 
@@ -418,6 +423,9 @@ local function run(options)
 		end
 		if extras > 0 then
 			print(("[PlaceAssets] Skipped %d extra copies because the cave is full.%s"):format(extras, missing == 0 and " Every model is in at least once." or ""))
+		end
+		if #errors > 0 then
+			warn("[PlaceAssets] Some models couldn't be placed because of an error. Copy this message and send it to Claude:\n" .. table.concat(errors, "\n"))
 		end
 		for _, name in ipairs(skippedEmpty) do
 			warn("[PlaceAssets] Skipped '" .. name .. "': it has no parts.")

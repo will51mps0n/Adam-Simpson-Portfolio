@@ -698,7 +698,7 @@ local function run(options)
 			P(m, Vector3.new(0.3, h, d), cf * CFrame.new(w / 2 - 0.15, midY, 0), C.wood, M.WoodPlanks)
 			P(m, Vector3.new(w - 0.6, h - 0.3, 0.25), cf * CFrame.new(0, 0.4 + (h - 0.3) / 2, -d / 2 + 0.12), C.plank, M.WoodPlanks).Name = "Door"
 			P(m, Vector3.new(0.7, 0.7, 0.05), cf * CFrame.new(0, h - 1.2, -d / 2 - 0.03), C.dark, M.SmoothPlastic, { CanCollide = false })
-			beam(m, (cf * CFrame.new(0, h + 1.1, -d / 2 - 0.6)).Position, (cf * CFrame.new(0, h + 0.4, d / 2 + 0.6)).Position, w + 0.8, 0.3, C.roof, M.CorrugatedSteel)
+			beam(m, (cf * CFrame.new(0, h + 1.1, -d / 2 - 0.6)).Position, (cf * CFrame.new(0, h + 0.4, d / 2 + 0.6)).Position, w + 0.8, 0.3, C.roof, M.CorrodedMetal)
 			return finishHide(m, "Outhouse", cf, CFrame.new(0, 3, 0.2), CFrame.new(0, 3, -d / 2 - 3), parent)
 		end
 
@@ -737,7 +737,7 @@ local function run(options)
 			wallWithHole(m, cf * CFrame.new(-sw / 2 + 0.3, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0), sd - 1.2, sh, 0.6, 0, 3, 3.5, 2.5, wallC, M.WoodPlanks)
 			P(m, Vector3.new(0.6, sh, sd - 1.2), cf * CFrame.new(sw / 2 - 0.3, 0.6 + sh / 2, 0), wallC, M.WoodPlanks)
 			-- sloped tin roof
-			beam(m, (cf * CFrame.new(0, sh + 2.4, -sd / 2 - 1)).Position, (cf * CFrame.new(0, sh + 0.9, sd / 2 + 1)).Position, sw + 1.6, 0.4, C.roof, M.CorrugatedSteel)
+			beam(m, (cf * CFrame.new(0, sh + 2.4, -sd / 2 - 1)).Position, (cf * CFrame.new(0, sh + 0.9, sd / 2 + 1)).Position, sw + 1.6, 0.4, C.roof, M.CorrodedMetal)
 			-- door swung open against the front wall
 			P(m, Vector3.new(0.3, 7.4, 4.4), cf * CFrame.new(-5.4, 4.3, -sd / 2 - 2.2), C.plank, M.WoodPlanks).Name = "Door"
 			-- inside: a wardrobe to hide in, a table, a crate and a lamp
@@ -1330,34 +1330,46 @@ local function run(options)
 			end
 		end
 
+		-- if something in one room breaks, keep building the rest and report it at the end
+		local problems = {}
 		for _, room in ipairs(rooms) do
-			if room.kind == "Lair" then
-				dressLair(room)
-			elseif room.kind == "Nook" then
-				dressNook(room)
-			elseif DRESS[room.name] then
-				DRESS[room.name](room)
+			local ok, err = pcall(function()
+				if room.kind == "Lair" then
+					dressLair(room)
+				elseif room.kind == "Nook" then
+					dressNook(room)
+				elseif DRESS[room.name] then
+					DRESS[room.name](room)
+				end
+			end)
+			if not ok then
+				table.insert(problems, room.name .. ": " .. tostring(err))
 			end
 		end
 
 		-- lanterns along the tunnels, alternating sides
-		for _, t in ipairs(tunnels) do
-			if t.lightEvery then
-				local nextAt, side = t.lightEvery * 0.6, 1
-				for i = 2, #t.samples - 1 do
-					local s = t.samples[i]
-					if s.s >= nextAt then
-						nextAt = s.s + t.lightEvery
-						if not insideAnyRoom(s.pos, 1.1) then
-							local tan = flat(t.samples[i + 1].pos - t.samples[i - 1].pos).Unit
-							local p = s.pos + Vector3.new(-tan.Z, 0, tan.X) * side * s.r * 0.6
-							local pos = snapY(W(p))
-							buildLanternPost(CFrame.lookAt(pos, Vector3.new(O.X + s.pos.X, pos.Y, O.Z + s.pos.Z)), t.lightOpts)
-							side = -side
+		local lanternsOk, lanternErr = pcall(function()
+			for _, t in ipairs(tunnels) do
+				if t.lightEvery then
+					local nextAt, side = t.lightEvery * 0.6, 1
+					for i = 2, #t.samples - 1 do
+						local s = t.samples[i]
+						if s.s >= nextAt then
+							nextAt = s.s + t.lightEvery
+							if not insideAnyRoom(s.pos, 1.1) then
+								local tan = flat(t.samples[i + 1].pos - t.samples[i - 1].pos).Unit
+								local p = s.pos + Vector3.new(-tan.Z, 0, tan.X) * side * s.r * 0.6
+								local pos = snapY(W(p))
+								buildLanternPost(CFrame.lookAt(pos, Vector3.new(O.X + s.pos.X, pos.Y, O.Z + s.pos.Z)), t.lightOpts)
+								side = -side
+							end
 						end
 					end
 				end
 			end
+		end)
+		if not lanternsOk then
+			table.insert(problems, "tunnel lanterns: " .. tostring(lanternErr))
 		end
 
 		-- invisible room volumes (handy later for "you are in ShackTown" UI, round logic, etc.)
@@ -1409,6 +1421,9 @@ local function run(options)
 		print("[CaveBuilder] The cave is the big block of rock past the edge of your Baseplate. The camera is now inside it at Base Camp. Press Play to walk around.")
 		if #disabled > 0 then
 			print("[CaveBuilder] Disabled other SpawnLocations so you spawn in the cave: " .. table.concat(disabled, ", "))
+		end
+		if #problems > 0 then
+			warn("[CaveBuilder] The cave is built, but some decorations didn't work. Copy this message and send it to Claude:\n" .. table.concat(problems, "\n"))
 		end
 		return true
 	end
