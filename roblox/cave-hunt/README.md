@@ -5,14 +5,14 @@ Two Studio scripts for an asymmetric hide-and-seek game: one player is the monst
 | File | What it does |
 | --- | --- |
 | `CaveBuilder.lua` | Carves the whole cave out of terrain and fills it with rooms, tunnels, hiding spots, lights, a spawn and monster spawns. |
-| `PlaceAssets.lua` | Copies **your** models (shelves, container, big room, …) onto free spots around the cave. |
+| `PlaceAssets.lua` | Takes **your** models from Workspace (shelves, container, big room, …) and puts copies on free spots around the cave. |
 
 ## 1. Build the cave
 
 Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/ca016ee131aebcd4032900eebf63ae969190ffd0/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/57e59422176e590d751889ac97c1fc96d3d7732c/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
 ```
 
 It downloads `CaveBuilder.lua` from GitHub and runs it. It also turns on **Allow HTTP Requests** for the place, which the download needs.
@@ -25,17 +25,27 @@ The cave sits **underground, around Y = -200, below your Baseplate**, so the map
 
 **Getting a newer version:** when the scripts are updated, you get a new command with a new commit in the link. Once a cave exists, the script won't build over it unless you end the command with `require(M)({ OVERWRITE = true })`. **That wipes the cave and anything you changed inside it**, so make your hand edits outside `Workspace.CaveSystem`, or redo them after a rebuild.
 
-## 2. Add your own assets (optional)
+## 2. Put your own models in the cave
 
-1. In **ServerStorage**, create a Folder `CaveAssets` containing two Folders: `Hiding` and `Decor`.
-2. Drag your models in. Things people hide in go in `Hiding`, decoration goes in `Decor`. Your big room can go in either.
-3. Run this in the Command Bar:
+After the cave is built, run this in the Command Bar, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/ca016ee131aebcd4032900eebf63ae969190ffd0/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/57e59422176e590d751889ac97c1fc96d3d7732c/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
 ```
 
-The biggest models are placed first, so your big room gets the big open spot in the Great Cavern (about 90 studs across). Hiding models get the `HidingSpot` tag and HidePoint/ExitPoint parts automatically. Run it again to reshuffle; it only replaces `CaveSystem.PlacedAssets`. To control how many copies of a model get placed, give it a number attribute named `Count`.
+You don't need to set anything up first. **The first time it runs, it picks up the models already in your Workspace** and moves them into **ServerStorage → CaveAssets**, sorted by size:
+
+- **Hiding**: at least 5 studs tall and no more than 30 studs across, like shelves or a container. The copies get the `HidingSpot` tag plus HidePoint/ExitPoint parts.
+- **Decor**: everything else, including your big room.
+
+It leaves alone the Baseplate, SpawnLocations, flat parts, and anything with a Humanoid or "monster" in its name, so your monster stays put. The Output window lists where each model went.
+
+Then it puts copies in the cave: 3 of each hiding model, 2 of each decoration, and 1 of anything wider than 30 studs. The biggest go first, so your big room gets the roughly 90-stud open space in the Great Cavern.
+
+- **Wrong folder?** Drag the model to the other folder in ServerStorage → CaveAssets and run the command again.
+- **New models later:** drag them straight into CaveAssets → Hiding or Decor and run it again. After the first run it no longer looks in Workspace, so your lobby is safe. To make it look in Workspace again, end the command with `require(M)({ COLLECT_FROM_WORKSPACE = true })`.
+- **Reshuffle:** run it again. It only replaces `Workspace.CaveSystem.PlacedAssets`.
+- **Per-model control (attributes):** `Count` (number) sets how many copies; `CaveRole` (string) set to `Hiding`, `Decor` or `Skip` overrides the sorting.
 
 ## Map
 
@@ -90,6 +100,7 @@ Pass these in the last brackets of the command, like `require(M)({ SEED = 7, OVE
 | `HIDING_COPIES` | `3` | Copies of each model in `Hiding` |
 | `DECOR_COPIES` | `2` | Copies of each model in `Decor` |
 | `BIG` | `30` | Models wider than this many studs are placed once (unless they have a `Count` attribute) |
+| `COLLECT_FROM_WORKSPACE` | `"auto"` | `"auto"` = pick up models from Workspace only the first time (before CaveAssets exists); `true` = every run; `false` = never |
 
 ## Tags for the gameplay scripts
 
