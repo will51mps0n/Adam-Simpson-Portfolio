@@ -1,0 +1,9 @@
+{
+  "name": "splash-squad-preview",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.48.2",
+    "three": "0.169.0"
+  }
+}

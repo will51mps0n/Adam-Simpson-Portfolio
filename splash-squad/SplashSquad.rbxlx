@@ -1,0 +1,3946 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+      <bool name="GlobalShadows">true</bool>
+      <bool name="Outlines">false</bool>
+      <token name="Technology">3</token>
+    </Properties>
+  </Item>
+  <Item class="Players" referent="1">
+    <Properties>
+      <string name="Name">Players</string>
+      <bool name="CharacterAutoLoads">false</bool>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="2">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="3">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="Folder" referent="4">
+        <Properties>
+          <string name="Name">Character</string>
+        </Properties>
+        <Item class="ModuleScript" referent="5">
+          <Properties>
+            <string name="Name">Accessories</string>
+            <string name="Source"><![CDATA[--!strict
+-- Extras a kid can wear: a towel cape, swim goggles, a life ring and a chest emblem.
+-- (The superhero eye mask is drawn on the face, see Face.luau.)
+
+local Shapes = require(script.Parent.Shapes)
+local HeadShape = require(script.Parent.HeadShape)
+local Types = require(script.Parent.Types)
+local Palette = require(script.Parent.Parent.Data.Palette)
+local Outfits = require(script.Parent.Parent.Data.Outfits)
+
+type Context = Types.Context
+
+local Accessories = {}
+
+-- Width of the body (a bean shape) at a height, as half-widths in X and Z.
+-- `fraction` is 0 at the bottom of the body and 1 at the top.
+function Accessories.bodyHalfWidths(dims: Types.Dims, fraction: number): (number, number)
+	local t = (fraction - 0.5) / 0.5
+	local k = math.sqrt(math.max(0, 1 - t * t))
+	return dims.body.X / 2 * k, dims.body.Z / 2 * k
+end
+
+-- A thin ring hugging the body at a height (belts, stripes, waistbands).
+function Accessories.band(ctx: Context, name: string, fraction: number, thickness: number, color: Color3)
+	local d = ctx.dims
+	local hx, hz = Accessories.bodyHalfWidths(d, fraction)
+	local part = Shapes.ellipsoid(name, Vector3.new(hx * 2.07, thickness, hz * 2.07), color, ctx.model)
+	ctx.addToBone(part, "Body", CFrame.new(0, d.body.Y * fraction, 0))
+end
+
+function Accessories.cape(ctx: Context, piece: Outfits.Piece)
+	local d, s = ctx.dims, ctx.scale
+	local color = Palette.resolve(piece.color, Palette.Cloth.Red)
+	local knot = Palette.resolve(piece.accent, Palette.Cloth.Sunny)
+	local length = d.shoulderY + 0.12 * s - d.leg.Y * 0.45
+	local cape = Shapes.ellipsoid("Cape", Vector3.new(d.body.X * 1.5, length, 0.2 * s), color, ctx.model)
+	cape.CastShadow = false
+	-- The Cape bone sits behind the shoulders; tilt the cape so it flares out at the bottom.
+	ctx.addToBone(cape, "Cape", CFrame.Angles(math.rad(-8), 0, 0) * CFrame.new(0, -length / 2 + 0.12 * s, 0.08 * s))
+	-- Straps over the shoulders and a knot at the neck.
+	for side = -1, 1, 2 do
+		local strap = Shapes.ellipsoid("CapeStrap", Vector3.new(0.26 * s, 0.2 * s, d.body.Z * 0.9), color, ctx.model)
+		ctx.addInRootSpace(strap, "Body", CFrame.new(side * d.body.X * 0.27, d.bodyTopY - 0.24 * s, 0))
+		local tie = Shapes.ball("CapeKnot", 0.28 * s, knot, ctx.model)
+		ctx.addInRootSpace(tie, "Body", CFrame.new(side * d.body.X * 0.12, d.bodyTopY - 0.24 * s, -d.body.Z * 0.4))
+	end
+end
+
+function Accessories.goggles(ctx: Context, piece: Outfits.Piece)
+	local s, r = ctx.scale, ctx.headRadii
+	local lens = Palette.resolve(piece.color, Palette.Cloth.Glass)
+	local strap = Palette.resolve(piece.accent, Palette.Cloth.Aqua)
+	local lift = math.max(ctx.hairPuff, 1) + 0.04
+	-- Pushed up on the forehead, just above the eyebrows.
+	local centers = {}
+	for side = -1, 1, 2 do
+		local direction = Shapes.direction(36, side * 23)
+		local point = HeadShape.surface(r, direction, lift)
+		local normal = (HeadShape.normal(r, point) + Vector3.new(0, -0.15, -0.35)).Unit
+		local frame = Shapes.facing(point, normal)
+		ctx.addToHead(Shapes.ellipsoid("GoggleRim", Vector3.new(0.72, 0.66, 0.14) * s, strap, ctx.model), frame)
+		local glass = Shapes.ellipsoid("GoggleLens", Vector3.new(0.56, 0.5, 0.14) * s, lens, ctx.model)
+		glass.Reflectance = 0.15
+		ctx.addToHead(glass, frame * CFrame.new(0, 0, -0.04 * s))
+		ctx.addToHead(Shapes.ball("GoggleShine", 0.13 * s, Palette.Cloth.White, ctx.model), frame * CFrame.new(-0.12 * s, 0.1 * s, -0.09 * s))
+		table.insert(centers, point)
+	end
+	ctx.addToHead(
+		Shapes.ellipsoid("GoggleBridge", Vector3.new((centers[2] - centers[1]).Magnitude * 0.5, 0.1 * s, 0.1 * s), strap, ctx.model),
+		CFrame.new((centers[1] + centers[2]) / 2)
+	)
+	-- The strap goes around the head (over the hair) at the same height.
+	local y = centers[1].Y
+	local cap = ctx.cap
+	local rx, rz, cz
+	if cap then
+		local capRadii = cap.size / 2
+		local t = math.clamp((y - cap.center.Y) / capRadii.Y, -0.95, 0.95)
+		local k = math.sqrt(1 - t * t) * 1.02
+		rx, rz, cz = capRadii.X * k, capRadii.Z * k, cap.center.Z
+	else
+		local t = math.clamp(y / r.Y, -0.95, 0.95)
+		local k = math.sqrt(1 - t * t) * 1.03
+		rx, rz, cz = r.X * k, r.Z * k, 0
+	end
+	ctx.addToHead(Shapes.ellipsoid("GoggleStrap", Vector3.new(rx * 2, 0.16 * s, rz * 2), strap, ctx.model), CFrame.new(0, y, cz))
+end
+
+function Accessories.lifeRing(ctx: Context, piece: Outfits.Piece)
+	local d, s = ctx.dims, ctx.scale
+	local color = Palette.resolve(piece.color, Palette.Cloth.Red)
+	local stripe = Palette.resolve(piece.accent, Palette.Cloth.White)
+	local fraction = 0.34
+	local hx, hz = Accessories.bodyHalfWidths(d, fraction)
+	local tube = 0.46 * s
+	local rx, rz = hx + tube * 0.3, hz + tube * 0.3
+	local count = 16
+	for i = 0, count - 1 do
+		local a = i / count * 2 * math.pi
+		local position = Vector3.new(rx * math.cos(a), d.body.Y * fraction, rz * math.sin(a))
+		local tangent = Vector3.new(-rx * math.sin(a), 0, rz * math.cos(a))
+		local part = Shapes.ellipsoid("LifeRing", Vector3.new(tube, tube, tube * 1.3), if (i // 2) % 2 == 0 then color else stripe, ctx.model)
+		ctx.addToBone(part, "Body", Shapes.facing(position, tangent))
+	end
+end
+
+-- A felt badge on the chest with a letter on it.
+function Accessories.emblem(ctx: Context, emblem: { letter: string, color: Outfits.ColorRef?, ink: Outfits.ColorRef? })
+	local d, s = ctx.dims, ctx.scale
+	local fraction = 0.6
+	local _, hz = Accessories.bodyHalfWidths(d, fraction)
+	local badge = Shapes.carrier("Emblem", Vector3.new(0.72, 0.72, 0.05) * s, ctx.model)
+	ctx.addToBone(badge, "Body", CFrame.new(0, d.body.Y * fraction, -hz - 0.03 * s), true)
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "EmblemGui"
+	gui.Face = Enum.NormalId.Front
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	gui.CanvasSize = Vector2.new(100, 100)
+	gui.LightInfluence = 0.6
+	gui.Adornee = badge
+	gui.Parent = badge
+
+	local disc = Instance.new("Frame")
+	disc.Name = "Disc"
+	disc.Size = UDim2.fromScale(1, 1)
+	disc.BackgroundColor3 = Palette.resolve(emblem.color, Palette.Cloth.Sunny)
+	disc.BorderSizePixel = 0
+	disc.Parent = gui
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.5, 0)
+	corner.Parent = disc
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Letter"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.Text = emblem.letter
+	label.TextScaled = true
+	label.TextColor3 = Palette.resolve(emblem.ink, Palette.Cloth.Red)
+	label.Parent = disc
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0.14, 0)
+	padding.PaddingBottom = UDim.new(0.14, 0)
+	padding.Parent = label
+end
+
+return Accessories
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="6">
+          <Properties>
+            <string name="Name">CharacterBuilder</string>
+            <string name="Source"><![CDATA[--!strict
+-- Builds a chibi cartoon kid from parts: a big round head with a drawn face,
+-- a bean body, stubby arms and legs, mitten hands and round shoes, then
+-- dresses them from an outfit (see Data/Outfits.luau).
+--
+-- Usage:
+--   local kid = CharacterBuilder.build(outfit, CFrame.new(0, 1, 0), { name = "Pip" })
+--   kid.Face:SetExpression("Win")
+
+local Config = require(script.Parent.Parent.Config)
+local Palette = require(script.Parent.Parent.Data.Palette)
+local Outfits = require(script.Parent.Parent.Data.Outfits)
+local Shapes = require(script.Parent.Shapes)
+local KidRig = require(script.Parent.KidRig)
+local Face = require(script.Parent.Face)
+local Hair = require(script.Parent.Hair)
+local Hats = require(script.Parent.Hats)
+local Accessories = require(script.Parent.Accessories)
+local Outline = require(script.Parent.Outline)
+local Types = require(script.Parent.Types)
+
+export type Dims = Types.Dims
+
+export type Kid = {
+	Model: Model,
+	Root: BasePart,
+	Head: BasePart,
+	Rig: KidRig.Rig,
+	Face: Face.Face,
+	Dims: Dims,
+	Outfit: Outfits.Outfit,
+	Highlight: Highlight?,
+}
+
+export type BuildOptions = {
+	name: string?,
+	parent: Instance?, -- default: Workspace
+	outline: boolean?, -- default: true
+}
+
+local CharacterBuilder = {}
+
+function CharacterBuilder.measure(outfit: Outfits.Outfit): Dims
+	local K = Config.Kid
+	local proportions: { scale: number?, bodyStretch: number?, headScale: number? } = outfit.proportions or {}
+	local s = proportions.scale or 1
+	local stretch = proportions.bodyStretch or 1
+	local headScale = proportions.headScale or 1
+	local tall = Vector3.new(1, stretch, 1)
+
+	local head = K.HeadSize * s * headScale
+	local body = K.BodySize * s * tall
+	local leg = K.LegSize * s * tall
+	local arm = K.ArmSize * s * Vector3.new(1, stretch ^ 0.6, 1)
+	local shoe = K.ShoeSize * s
+
+	local legTopY = shoe.Y * 0.55 + leg.Y
+	local bodyBottomY = legTopY - leg.Y * 0.3
+	local bodyTopY = bodyBottomY + body.Y
+	local neckY = bodyTopY - K.HeadSink * s * headScale
+	local headCenterY = neckY + head.Y / 2
+	local shoulderY = bodyTopY - K.ShoulderDrop * s * math.sqrt(stretch)
+	local fromCenter = (shoulderY - (bodyBottomY + body.Y / 2)) / (body.Y / 2)
+	local shoulderX = body.X / 2 * math.sqrt(math.max(0, 1 - fromCenter * fromCenter)) * 0.9
+
+	return {
+		scale = s,
+		head = head,
+		body = body,
+		leg = leg,
+		arm = arm,
+		hand = K.HandSize * s,
+		shoe = shoe,
+		feet = K.FeetSize * s,
+		legSpread = K.LegSpread * s,
+		legTopY = legTopY,
+		bodyBottomY = bodyBottomY,
+		bodyTopY = bodyTopY,
+		neckY = neckY,
+		headCenterY = headCenterY,
+		height = headCenterY + head.Y / 2,
+		shoulderY = shoulderY,
+		shoulderX = shoulderX,
+	}
+end
+
+function CharacterBuilder.build(outfit: Outfits.Outfit, cframe: CFrame, options: BuildOptions?): Kid
+	local opts: BuildOptions = options or {}
+	local d = CharacterBuilder.measure(outfit)
+	local s = d.scale
+
+	local model = Instance.new("Model")
+	model.Name = opts.name or "Kid"
+	local root = Shapes.carrier("Root", Vector3.new(0.4, 0.4, 0.4) * s, model)
+	model.PrimaryPart = root
+
+	-- Skeleton. The root sits on the ground between the feet; the kid faces -Z.
+	local rig = KidRig.new(root)
+	local restAngle = math.rad(Config.Kid.ArmRestAngle)
+	KidRig.addBone(rig, "Body", "Root", CFrame.new(0, d.bodyBottomY, 0))
+	KidRig.addBone(rig, "Head", "Body", CFrame.new(0, d.neckY - d.bodyBottomY, 0))
+	KidRig.addBone(rig, "ArmR", "Body", CFrame.new(d.shoulderX, d.shoulderY - d.bodyBottomY, 0) * CFrame.Angles(0, 0, restAngle))
+	KidRig.addBone(rig, "ArmL", "Body", CFrame.new(-d.shoulderX, d.shoulderY - d.bodyBottomY, 0) * CFrame.Angles(0, 0, -restAngle))
+	KidRig.addBone(rig, "LegR", "Root", CFrame.new(d.legSpread, d.legTopY, 0))
+	KidRig.addBone(rig, "LegL", "Root", CFrame.new(-d.legSpread, d.legTopY, 0))
+	KidRig.addBone(rig, "Cape", "Body", CFrame.new(0, d.shoulderY - d.bodyBottomY + 0.12 * s, d.body.Z * 0.32))
+
+	local headCenter = CFrame.new(0, d.head.Y / 2, 0) -- head center in Head-bone space
+	local ctx: Types.Context = {
+		model = model,
+		dims = d,
+		scale = s,
+		skin = Palette.resolve(outfit.skin, Palette.Skin.Peach),
+		headRadii = d.head / 2,
+		cap = nil,
+		hairTop = d.head.Y / 2,
+		hairPuff = 1,
+		addToHead = function(part, headSpace)
+			KidRig.attach(rig, part, "Head", headCenter * headSpace)
+		end,
+		addToBone = function(part, bone, boneSpace, squashBySize)
+			KidRig.attach(rig, part, bone, boneSpace, squashBySize)
+		end,
+		addInRootSpace = function(part, bone, rootSpace)
+			KidRig.attachInRootSpace(rig, part, bone, rootSpace)
+		end,
+	}
+
+	-- Colors
+	local skin = ctx.skin
+	local topStyle = outfit.top.style
+	local topColor = if topStyle == "None" then skin else Palette.resolve(outfit.top.color, Palette.Cloth.White)
+	local topAccent = Palette.resolve(
+		outfit.top.accent or (Outfits.find(Outfits.Tops, topStyle) or {} :: any).accent,
+		Palette.Cloth.Red
+	)
+	local bottomStyle = outfit.bottom.style
+	local bottomColor = Palette.resolve(outfit.bottom.color, Palette.Cloth.Navy)
+	local armColor = if topStyle == "Suit" then topColor else skin
+	local legColor = if bottomStyle == "Pants"
+		then bottomColor
+		elseif topStyle == "Suit" then topColor
+		else skin
+
+	-- Body and head
+	local body = Shapes.ellipsoid("Body", d.body, topColor, model)
+	ctx.addToBone(body, "Body", CFrame.new(0, d.body.Y / 2, 0))
+
+	local head = Shapes.ellipsoid("Head", d.head, skin, model)
+	ctx.addToBone(head, "Head", headCenter, true)
+	local face = Face.new(head, {
+		skin = skin,
+		mask = if outfit.mask then Palette.resolve(outfit.mask) else nil,
+	})
+
+	-- Arms with mitten hands (and sleeves for t-shirts).
+	for _, bone in { "ArmR", "ArmL" } do
+		local inset = d.arm.X * 0.3
+		local arm = Shapes.ellipsoid(bone, d.arm, armColor, model)
+		ctx.addToBone(arm, bone, CFrame.new(0, -(d.arm.Y / 2 - inset), 0))
+		local hand = Shapes.ellipsoid("Hand", d.hand, skin, model)
+		ctx.addToBone(hand, bone, CFrame.new(0, -(d.arm.Y - inset) + d.hand.Y * 0.18, 0))
+		if topStyle == "Tee" or topStyle == "Stripes" then
+			local sleeve = Shapes.ellipsoid("Sleeve", d.arm * Vector3.new(1.32, 0.52, 1.32), topColor, model)
+			ctx.addToBone(sleeve, bone, CFrame.new(0, -d.arm.Y * 0.16, 0))
+		end
+	end
+
+	-- Legs and shoes
+	local shoes = outfit.shoes
+	local shoeColor = Palette.resolve(shoes.color, Palette.Cloth.Red)
+	local shoeAccent = Palette.resolve(shoes.accent, Palette.Cloth.White)
+	for _, bone in { "LegR", "LegL" } do
+		local leg = Shapes.ellipsoid(bone, d.leg, legColor, model)
+		ctx.addToBone(leg, bone, CFrame.new(0, -d.leg.Y / 2, 0))
+		if bottomStyle == "Shorts" then
+			local cuff = Shapes.ellipsoid("ShortsLeg", d.leg * Vector3.new(1.3, 0.55, 1.3), bottomColor, model)
+			ctx.addToBone(cuff, bone, CFrame.new(0, -d.leg.Y * 0.22, 0))
+		end
+
+		if shoes.style == "Bare" then
+			local foot = Shapes.ellipsoid("Foot", d.feet, skin, model)
+			ctx.addToBone(foot, bone, CFrame.new(0, d.feet.Y / 2 - d.legTopY, -d.feet.Z * 0.14))
+		else
+			local shoe = Shapes.ellipsoid("Shoe", d.shoe, shoeColor, model)
+			ctx.addToBone(shoe, bone, CFrame.new(0, d.shoe.Y / 2 - d.legTopY, -d.shoe.Z * 0.14))
+			if shoes.style == "Sneakers" then
+				local sole = Shapes.ellipsoid("Sole", d.shoe * Vector3.new(1.06, 0.42, 1.04), shoeAccent, model)
+				ctx.addToBone(sole, bone, CFrame.new(0, d.shoe.Y * 0.2 - d.legTopY, -d.shoe.Z * 0.14))
+			elseif shoes.style == "Boots" then
+				local shaft = Shapes.ellipsoid("BootShaft", d.leg * Vector3.new(1.32, 0.72, 1.32), shoeColor, model)
+				ctx.addToBone(shaft, bone, CFrame.new(0, -d.leg.Y * 0.68, 0))
+				local cuff = Shapes.ellipsoid("BootCuff", d.leg * Vector3.new(1.34, 0.16, 1.34), shoeColor:Lerp(Palette.Cloth.White, 0.3), model)
+				ctx.addToBone(cuff, bone, CFrame.new(0, -d.leg.Y * 0.36, 0))
+			end
+		end
+	end
+
+	-- Bottoms: a rounded overlay on the lower part of the bean.
+	local trunks = Shapes.ellipsoid("Bottoms", d.body * Vector3.new(1.07, 0.56, 1.07), bottomColor, model)
+	ctx.addToBone(trunks, "Body", CFrame.new(0, d.body.Y * 0.24, 0))
+	local bottomAccent = outfit.bottom.accent or (Outfits.find(Outfits.Bottoms, bottomStyle) or {} :: any).accent
+	if bottomAccent then
+		Accessories.band(ctx, "Waistband", 0.37, d.body.Y * 0.07, Palette.resolve(bottomAccent))
+	end
+
+	-- Tops
+	if topStyle == "Stripes" then
+		Accessories.band(ctx, "Stripe", 0.52, d.body.Y * 0.085, topAccent)
+		Accessories.band(ctx, "Stripe", 0.7, d.body.Y * 0.085, topAccent)
+	elseif topStyle == "Suit" then
+		Accessories.band(ctx, "Belt", 0.43, d.body.Y * 0.1, topAccent)
+	end
+
+	-- Hair, hat and extras
+	Hair.build(ctx, outfit.hair, Hats.coversTop(outfit.hat))
+	Hats.build(ctx, outfit.hat)
+	if outfit.cape then
+		Accessories.cape(ctx, outfit.cape)
+	end
+	if outfit.goggles then
+		Accessories.goggles(ctx, outfit.goggles)
+	end
+	if outfit.lifeRing then
+		Accessories.lifeRing(ctx, outfit.lifeRing)
+	end
+	if outfit.emblem then
+		Accessories.emblem(ctx, outfit.emblem)
+	end
+
+	local kid: Kid = {
+		Model = model,
+		Root = root,
+		Head = head,
+		Rig = rig,
+		Face = face,
+		Dims = d,
+		Outfit = outfit,
+		Highlight = nil,
+	}
+
+	KidRig.apply(rig, { root = cframe })
+	model.Parent = opts.parent or workspace
+	if opts.outline ~= false then
+		kid.Highlight = Outline.add(model)
+	end
+	return kid
+end
+
+function CharacterBuilder.destroy(kid: Kid)
+	kid.Model:Destroy()
+end
+
+return CharacterBuilder
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="7">
+          <Properties>
+            <string name="Name">Face</string>
+            <string name="Source"><![CDATA[--!strict
+-- Draws a kid's face with a SurfaceGui on the front of the head: eyes with
+-- shine dots, eyebrows, blush and a mouth, all made of rounded Frames.
+-- Every expression's pieces are built once and switched on and off, so
+-- changing expression is instant.
+--
+-- Curved lines (smiles, closed eyes, dizzy spirals) are chains of short
+-- rounded bars. Layout numbers live in Config.Face.
+
+local Config = require(script.Parent.Parent.Config)
+local Palette = require(script.Parent.Parent.Data.Palette)
+
+export type Expression = {
+	eyes: string,
+	brows: string,
+	mouth: string,
+	blush: number, -- blush transparency (0 = strong, 1 = none)
+}
+
+local Face = {}
+Face.__index = Face
+
+Face.Expressions = {
+	Idle = { eyes = "Open", brows = "Normal", mouth = "Smile", blush = 0.4 },
+	Aiming = { eyes = "Smug", brows = "Smug", mouth = "Smirk", blush = 0.5 },
+	Fire = { eyes = "Open", brows = "Determined", mouth = "Grin", blush = 0.4 },
+	Hit = { eyes = "Squeezed", brows = "Worried", mouth = "O", blush = 0.25 },
+	Flying = { eyes = "Spiral", brows = "Raised", mouth = "BigOpen", blush = 0.35 },
+	Wet = { eyes = "Droopy", brows = "Worried", mouth = "Frown", blush = 0.55 },
+	Win = { eyes = "Happy", brows = "Raised", mouth = "BigSmile", blush = 0.15 },
+} :: { [string]: Expression }
+
+Face.ExpressionOrder = { "Idle", "Aiming", "Fire", "Hit", "Flying", "Wet", "Win" }
+
+type Spiral = { frame: Frame, direction: number }
+
+type FaceData = {
+	Gui: SurfaceGui,
+	Groups: { [string]: { [string]: Frame } },
+	Blush: { Frame },
+	Spirals: { Spiral },
+	Expression: string,
+	EyesShown: string,
+	BlinkToken: number,
+}
+
+export type Face = typeof(setmetatable({} :: FaceData, Face))
+
+export type FaceOptions = {
+	skin: Color3?, -- dark skin gets a soft light rim around the lines so they stay readable
+	mask: Color3?, -- superhero eye mask
+}
+
+------------------------------------------------------------------------
+-- Drawing helpers. All positions are in canvas pixels.
+
+type FrameOptions = {
+	transparency: number?,
+	rounded: boolean?,
+	rotation: number?,
+	z: number?,
+	name: string?,
+	halo: boolean?, -- draw a light rim behind this shape (dark skin only)
+}
+
+-- Light rim color for the face being built (nil = no rims).
+local halo: Color3? = nil
+local HALO_WIDTH = 5
+
+local function shape(parent: GuiObject, center: Vector2, size: Vector2, color: Color3, options: FrameOptions?): Frame
+	local opts: FrameOptions = options or {}
+	if opts.halo and halo then
+		shape(parent, center, size + Vector2.new(HALO_WIDTH, HALO_WIDTH), halo, {
+			rotation = opts.rotation,
+			z = (opts.z or 1) - 1,
+			name = "Rim",
+		})
+	end
+	local frame = Instance.new("Frame")
+	frame.Name = opts.name or "Shape"
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.Position = UDim2.fromOffset(center.X, center.Y)
+	frame.Size = UDim2.fromOffset(size.X, size.Y)
+	frame.BackgroundColor3 = color
+	frame.BackgroundTransparency = opts.transparency or 0
+	frame.BorderSizePixel = 0
+	frame.Rotation = opts.rotation or 0
+	frame.ZIndex = opts.z or 1
+	if opts.rounded ~= false then
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0.5, 0)
+		corner.Parent = frame
+	end
+	frame.Parent = parent
+	return frame
+end
+
+local function layer(parent: Instance, name: string, z: number): Frame
+	local frame = Instance.new("Frame")
+	frame.Name = name
+	frame.Size = UDim2.fromScale(1, 1)
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+	frame.ZIndex = z
+	frame.Parent = parent
+	return frame
+end
+
+-- A rounded bar from a to b; overlapping bars make smooth curves.
+local function bar(parent: GuiObject, a: Vector2, b: Vector2, thickness: number, color: Color3)
+	local delta = b - a
+	shape(parent, (a + b) / 2, Vector2.new(delta.Magnitude + thickness, thickness), color, {
+		rotation = math.deg(math.atan2(delta.Y, delta.X)),
+		name = "Line",
+		z = 2,
+		halo = true,
+	})
+end
+
+local function polyline(parent: GuiObject, points: { Vector2 }, thickness: number, color: Color3)
+	for i = 1, #points - 1 do
+		bar(parent, points[i], points[i + 1], thickness, color)
+	end
+end
+
+-- Points on an elliptical arc. Angles in degrees, 0 = right, 90 = up.
+local function arc(center: Vector2, rx: number, ry: number, from: number, to: number, segments: number): { Vector2 }
+	local points = {}
+	for i = 0, segments do
+		local a = math.rad(from + (to - from) * i / segments)
+		table.insert(points, center + Vector2.new(rx * math.cos(a), -ry * math.sin(a)))
+	end
+	return points
+end
+
+-- Open mouth: the bottom half of a dark oval, with an optional tongue and teeth.
+local function halfOval(parent: GuiObject, center: Vector2, width: number, depth: number, tongue: boolean, teeth: boolean)
+	local clip = Instance.new("Frame")
+	clip.Name = "Clip"
+	clip.Position = UDim2.fromOffset(center.X - width / 2, center.Y - depth * 0.5)
+	clip.Size = UDim2.fromOffset(width, depth)
+	clip.BackgroundTransparency = 1
+	clip.ClipsDescendants = true
+	clip.Parent = parent
+	shape(clip, Vector2.new(width / 2, 0), Vector2.new(width, depth * 2), Palette.Face.MouthInside, {
+		name = "Inside",
+		z = 2,
+		halo = true,
+	})
+	if tongue then
+		shape(clip, Vector2.new(width / 2, depth * 0.7), Vector2.new(width * 0.5, depth * 0.44), Palette.Face.Tongue, {
+			name = "Tongue",
+			z = 3,
+		})
+	end
+	if teeth then
+		shape(clip, Vector2.new(width / 2, depth * 0.1), Vector2.new(width * 0.8, depth * 0.22), Palette.Face.Teeth, {
+			name = "Teeth",
+			z = 3,
+		})
+	end
+end
+
+------------------------------------------------------------------------
+
+function Face.new(head: BasePart, options: FaceOptions?): Face
+	local opts: FaceOptions = options or {}
+	local F = Config.Face
+	local cw = Config.Kid.HeadSize.X * F.PixelsPerStud
+	local ch = Config.Kid.HeadSize.Y * F.PixelsPerStud
+
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "Face"
+	gui.Face = Enum.NormalId.Front
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+	gui.CanvasSize = Vector2.new(cw, ch)
+	gui.LightInfluence = F.LightInfluence
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Adornee = head
+	gui.Parent = head
+
+	local self: Face = setmetatable({
+		Gui = gui,
+		Groups = { Eyes = {}, Brows = {}, Mouth = {} },
+		Blush = {},
+		Spirals = {},
+		Expression = "Idle",
+		EyesShown = "Open",
+		BlinkToken = 0,
+	} :: FaceData, Face)
+
+	-- Dark skin: rim the lines in a lighter shade of the skin so they still read.
+	halo = nil
+	if opts.skin then
+		local brightness = 0.299 * opts.skin.R + 0.587 * opts.skin.G + 0.114 * opts.skin.B
+		local amount = math.clamp((0.55 - brightness) * 1.6, 0, 0.45)
+		if amount > 0.02 then
+			halo = opts.skin:Lerp(Color3.new(1, 1, 1), amount)
+		end
+	end
+
+	local line = cw * F.LineThickness
+	local ew, eh = cw * F.EyeWidth, ch * F.EyeHeight
+	local ey = ch * F.EyeY
+	local eyeColor = Palette.Face.Eye
+	local shine = Palette.Face.Shine
+
+	-- Blush
+	local blushLayer = layer(gui, "Blush", 1)
+	for side = -1, 1, 2 do
+		local blush = shape(
+			blushLayer,
+			Vector2.new(cw * (0.5 + side * F.BlushSpacing / 2), ch * F.BlushY),
+			Vector2.new(cw * F.BlushWidth, ch * F.BlushHeight),
+			Palette.Face.Blush,
+			{ transparency = 0.4, name = "Blush" }
+		)
+		table.insert(self.Blush, blush)
+	end
+
+	-- Superhero mask: a band behind the eyes with white eye holes.
+	if opts.mask then
+		local maskLayer = layer(gui, "Mask", 2)
+		shape(
+			maskLayer,
+			Vector2.new(cw * 0.5, ey - eh * 0.02),
+			Vector2.new(cw * (F.EyeSpacing + F.EyeWidth * 2.3), eh * 1.12),
+			opts.mask,
+			{ name = "Band" }
+		)
+		for side = -1, 1, 2 do
+			shape(
+				maskLayer,
+				Vector2.new(cw * (0.5 + side * F.EyeSpacing / 2), ey),
+				Vector2.new(ew * 1.6, eh * 1.18),
+				shine,
+				{ name = "Hole", z = 2 }
+			)
+		end
+	end
+
+	-- Eyes: one group per look. `side` is -1 for the eye on the viewer's left.
+	local function eyeGroup(name: string, draw: (group: Frame, ex: number, side: number, inward: number) -> ())
+		local group = layer(gui, "Eyes" .. name, 3)
+		for side = -1, 1, 2 do
+			draw(group, cw * (0.5 + side * F.EyeSpacing / 2), side, -side)
+		end
+		self.Groups.Eyes[name] = group
+	end
+
+	eyeGroup("Open", function(group, ex)
+		shape(group, Vector2.new(ex, ey), Vector2.new(ew, eh), eyeColor, { name = "Eye", z = 2, halo = true })
+		local d = ew * F.ShineSize
+		shape(group, Vector2.new(ex - ew * 0.17, ey - eh * 0.2), Vector2.new(d, d), shine, { z = 3, name = "Shine" })
+		shape(group, Vector2.new(ex + ew * 0.2, ey + eh * 0.22), Vector2.new(d * 0.42, d * 0.42), shine, {
+			z = 3,
+			name = "Shine",
+		})
+	end)
+
+	eyeGroup("Closed", function(group, ex)
+		polyline(group, arc(Vector2.new(ex, ey - eh * 0.05), ew * 0.6, eh * 0.18, 200, 340, 5), line, eyeColor)
+	end)
+
+	eyeGroup("Smug", function(group, ex, _side, inward)
+		local cy = ey + eh * 0.18
+		shape(group, Vector2.new(ex, cy), Vector2.new(ew, eh * 0.58), eyeColor, { name = "Eye", z = 2, halo = true })
+		local lidY = cy - eh * 0.29 + 1
+		bar(
+			group,
+			Vector2.new(ex - inward * ew * 0.66, lidY - 2),
+			Vector2.new(ex + inward * ew * 0.62, lidY + 3),
+			line * 1.1,
+			eyeColor
+		)
+		local d = ew * 0.32
+		shape(group, Vector2.new(ex - ew * 0.15, cy - eh * 0.04), Vector2.new(d, d), shine, { z = 3, name = "Shine" })
+	end)
+
+	eyeGroup("Squeezed", function(group, ex, _side, inward)
+		polyline(group, {
+			Vector2.new(ex - inward * ew * 0.55, ey - eh * 0.3),
+			Vector2.new(ex + inward * ew * 0.5, ey + 1),
+			Vector2.new(ex - inward * ew * 0.55, ey + eh * 0.3),
+		}, line * 1.15, eyeColor)
+	end)
+
+	eyeGroup("Spiral", function(group, ex, side)
+		local size = ew * 1.5
+		local spin = Instance.new("Frame")
+		spin.Name = "Spin"
+		spin.AnchorPoint = Vector2.new(0.5, 0.5)
+		spin.Position = UDim2.fromOffset(ex, ey)
+		spin.Size = UDim2.fromOffset(size, size)
+		spin.BackgroundTransparency = 1
+		spin.Parent = group
+		local points = {}
+		local turns, maxR = 2.25, ew * 0.62
+		local total = turns * 2 * math.pi
+		local a = 0
+		while a <= total do
+			local r = 1 + (maxR - 1) * a / total
+			table.insert(points, Vector2.new(size / 2 + r * math.cos(a * side), size / 2 - r * math.sin(a * side)))
+			a += 0.42
+		end
+		polyline(spin, points, line * 0.9, eyeColor)
+		table.insert(self.Spirals, { frame = spin, direction = side })
+	end)
+
+	eyeGroup("Droopy", function(group, ex, side, inward)
+		local cy = ey + eh * 0.15
+		shape(group, Vector2.new(ex, cy), Vector2.new(ew * 0.95, eh * 0.62), eyeColor, { name = "Eye", z = 2, halo = true })
+		local lidY = cy - eh * 0.31
+		bar(
+			group,
+			Vector2.new(ex - inward * ew * 0.66, lidY + 7),
+			Vector2.new(ex + inward * ew * 0.6, lidY - 2),
+			line * 1.1,
+			eyeColor
+		)
+		local d = ew * 0.42
+		shape(group, Vector2.new(ex - ew * 0.12, cy - eh * 0.02), Vector2.new(d, d), shine, { z = 3, name = "Shine" })
+		shape(group, Vector2.new(ex + ew * 0.18, cy + eh * 0.14), Vector2.new(d * 0.45, d * 0.45), shine, {
+			z = 3,
+			name = "Shine",
+		})
+		if side == 1 then
+			shape(group, Vector2.new(ex + ew * 0.55, ey + eh * 0.55), Vector2.new(ew * 0.3, ew * 0.48), Palette.Face.Tear, {
+				name = "Tear",
+			})
+		end
+	end)
+
+	eyeGroup("Happy", function(group, ex)
+		polyline(group, arc(Vector2.new(ex, ey + eh * 0.15), ew * 0.62, eh * 0.4, 15, 165, 6), line * 1.15, eyeColor)
+	end)
+
+	-- Eyebrows: { drop in pixels, tilt in degrees (clockwise), arch } for the left and right brow.
+	local browSets: { [string]: { { number } } } = {
+		Normal = { { 0, -7, 3 }, { 0, 7, 3 } },
+		Smug = { { 6, 14, 1 }, { -7, 5, 5 } },
+		Determined = { { 4, 18, 1 }, { 4, -18, 1 } },
+		Worried = { { -4, -16, 2 }, { -4, 16, 2 } },
+		Raised = { { -11, -8, 5 }, { -11, 8, 5 } },
+	}
+	local browLength = cw * F.BrowLength
+	local browColor = Palette.Face.Brow
+	for name, sides in browSets do
+		local group = layer(gui, "Brows" .. name, 4)
+		for i, side in { -1, 1 } do
+			local spec = sides[i]
+			local center = Vector2.new(cw * (0.5 + side * F.EyeSpacing / 2), ch * F.BrowY + spec[1])
+			local tilt = math.rad(spec[2])
+			local cos, sin = math.cos(tilt), math.sin(tilt)
+			local points = {}
+			for _, p in { Vector2.new(-browLength / 2, 0), Vector2.new(0, -spec[3]), Vector2.new(browLength / 2, 0) } do
+				table.insert(points, center + Vector2.new(p.X * cos - p.Y * sin, p.X * sin + p.Y * cos))
+			end
+			polyline(group, points, line * 0.95, browColor)
+		end
+		self.Groups.Brows[name] = group
+	end
+
+	-- Mouths
+	local mx, my = cw * 0.5, ch * F.MouthY
+	local mw = cw * F.MouthWidth
+	local mouthLine = Palette.Face.MouthLine
+	local function mouthGroup(name: string, draw: (group: Frame) -> ())
+		local group = layer(gui, "Mouth" .. name, 5)
+		draw(group)
+		self.Groups.Mouth[name] = group
+	end
+
+	mouthGroup("Smile", function(group)
+		polyline(group, arc(Vector2.new(mx, my - mw * 0.3), mw * 0.5, mw * 0.42, 200, 340, 7), line, mouthLine)
+	end)
+	mouthGroup("Smirk", function(group)
+		polyline(group, arc(Vector2.new(mx + mw * 0.1, my - mw * 0.28), mw * 0.46, mw * 0.36, 225, 378, 8), line, mouthLine)
+	end)
+	mouthGroup("Grin", function(group)
+		halfOval(group, Vector2.new(mx, my), mw * 1.3, mw * 1.3 * 0.58, true, true)
+	end)
+	mouthGroup("O", function(group)
+		shape(group, Vector2.new(mx, my + 2), Vector2.new(mw * 0.48, mw * 0.58), Palette.Face.MouthInside, {
+			name = "O",
+			z = 2,
+			halo = true,
+		})
+	end)
+	mouthGroup("BigOpen", function(group)
+		shape(group, Vector2.new(mx, my + 5), Vector2.new(mw * 0.82, mw * 1.0), Palette.Face.MouthInside, {
+			name = "Open",
+			z = 2,
+			halo = true,
+		})
+		shape(group, Vector2.new(mx, my + 5 + mw * 0.27), Vector2.new(mw * 0.48, mw * 0.3), Palette.Face.Tongue, {
+			name = "Tongue",
+			z = 3,
+		})
+	end)
+	mouthGroup("Frown", function(group)
+		polyline(group, arc(Vector2.new(mx, my + mw * 0.35), mw * 0.42, mw * 0.32, 25, 155, 6), line, mouthLine)
+	end)
+	mouthGroup("BigSmile", function(group)
+		halfOval(group, Vector2.new(mx, my - 2), mw * 1.55, mw * 1.55 * 0.62, true, false)
+	end)
+
+	halo = nil
+	self:SetExpression("Idle")
+	return self
+end
+
+function Face._show(self: Face, category: string, name: string)
+	for groupName, group in self.Groups[category] do
+		group.Visible = groupName == name
+	end
+	if category == "Eyes" then
+		self.EyesShown = name
+	end
+end
+
+function Face.SetExpression(self: Face, name: string)
+	local expression = Face.Expressions[name]
+	if not expression then
+		warn(`[Face] Unknown expression "{name}"`)
+		return
+	end
+	self.Expression = name
+	self.BlinkToken += 1 -- cancel any blink in progress
+	self:_show("Eyes", expression.eyes)
+	self:_show("Brows", expression.brows)
+	self:_show("Mouth", expression.mouth)
+	for _, blush in self.Blush do
+		blush.BackgroundTransparency = expression.blush
+	end
+end
+
+-- Close the eyes for a moment (only when they are open).
+function Face.Blink(self: Face)
+	local expression = Face.Expressions[self.Expression]
+	if not expression or (expression.eyes ~= "Open" and expression.eyes ~= "Smug") then
+		return
+	end
+	self.BlinkToken += 1
+	local token = self.BlinkToken
+	self:_show("Eyes", "Closed")
+	task.delay(Config.Face.BlinkTime, function()
+		if self.BlinkToken == token and self.Gui.Parent then
+			self:_show("Eyes", expression.eyes)
+		end
+	end)
+end
+
+-- Spins the dizzy eyes; call every frame.
+function Face.Update(self: Face, dt: number)
+	if self.EyesShown ~= "Spiral" then
+		return
+	end
+	for _, spiral in self.Spirals do
+		spiral.frame.Rotation = (spiral.frame.Rotation + spiral.direction * Config.Face.SpiralSpeed * dt) % 360
+	end
+end
+
+return Face
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="8">
+          <Properties>
+            <string name="Name">Hair</string>
+            <string name="Source"><![CDATA[--!strict
+-- Hair styles, built from parts. Each style starts with a "cap" (a bigger
+-- copy of the head nudged up and back, see HeadShape.cap) and adds spikes,
+-- curls or a ponytail on top. To add a style: write a builder below and list
+-- it in Data/Outfits.luau.
+
+local Shapes = require(script.Parent.Shapes)
+local HeadShape = require(script.Parent.HeadShape)
+local Types = require(script.Parent.Types)
+local Palette = require(script.Parent.Parent.Data.Palette)
+local Outfits = require(script.Parent.Parent.Data.Outfits)
+
+type Context = Types.Context
+type Builder = (ctx: Context, color: Color3, accent: Color3, underHat: boolean) -> ()
+
+local Hair = {}
+
+local function addCap(ctx: Context, color: Color3, front: number, back: number, puff: number): HeadShape.Cap
+	local cap = HeadShape.cap(ctx.headRadii, front, back, puff)
+	ctx.addToHead(Shapes.ellipsoid("HairCap", cap.size, color, ctx.model), CFrame.new(cap.center))
+	ctx.cap = cap
+	ctx.hairTop = cap.center.Y + cap.size.Y / 2
+	ctx.hairPuff = puff
+	return cap
+end
+
+-- A soft spike standing on the cap and leaning outward.
+-- { elevation, azimuth, length, width, lean } with angles measured from the cap's center.
+local function addSpike(ctx: Context, cap: HeadShape.Cap, color: Color3, spec: { number })
+	local s = ctx.scale
+	local direction = Shapes.direction(spec[1], spec[2])
+	local length, width, lean = spec[3] * s, spec[4] * s, spec[5] or 0.35
+	local base = HeadShape.onCap(cap, direction, 0.96)
+	local out = (direction + Vector3.yAxis * lean).Unit
+	local part = Shapes.ellipsoid("Spike", Vector3.new(width, length, width), color, ctx.model)
+	ctx.addToHead(part, Shapes.alongY(base + out * length * 0.3, out))
+end
+
+-- Cheap repeatable "random" number between 0 and 1.
+local function hash(i: number): number
+	local x = math.sin(i * 12.9898) * 43758.5453
+	return x - math.floor(x)
+end
+
+local builders: { [string]: Builder } = {}
+
+builders.Spiky = function(ctx, color, _accent, underHat)
+	local cap = addCap(ctx, color, 0.42, -0.42, 1.05)
+	local spikes: { { number } } = if underHat
+		then {
+			{ 0, 75, 0.7, 0.42, 0.1 },
+			{ 0, -75, 0.7, 0.42, 0.1 },
+			{ 5, 125, 0.68, 0.42, 0.1 },
+			{ 5, -125, 0.68, 0.42, 0.1 },
+			{ 8, 180, 0.66, 0.42, 0.1 },
+		}
+		else {
+			{ 86, 10, 0.95, 0.58 },
+			{ 62, 35, 0.88, 0.56 },
+			{ 64, -30, 0.88, 0.56 },
+			{ 52, 90, 0.8, 0.54, 0.5 },
+			{ 52, -90, 0.8, 0.54, 0.5 },
+			{ 48, 145, 0.78, 0.54 },
+			{ 48, -145, 0.78, 0.54 },
+			{ 42, 180, 0.74, 0.54 },
+			{ 18, 80, 0.62, 0.48, 0.45 },
+			{ 18, -80, 0.62, 0.48, 0.45 },
+		}
+	for _, spec in spikes do
+		addSpike(ctx, cap, color, spec)
+	end
+	if not underHat then
+		ctx.hairTop += 0.62 * ctx.scale
+	end
+end
+
+builders.BowlCut = function(ctx, color, _accent, underHat)
+	local cap = addCap(ctx, color, 0.4, -0.5, 1.11)
+	if underHat then
+		return
+	end
+	-- A little sprout of hair sticking up on top.
+	local s = ctx.scale
+	local p0 = HeadShape.onCap(cap, Shapes.direction(80, 160), 0.97)
+	local d1 = Vector3.new(0.2, 1, 0.3).Unit
+	ctx.addToHead(Shapes.ellipsoid("Sprout", Vector3.new(0.2, 0.42, 0.2) * s, color, ctx.model), Shapes.alongY(p0 + d1 * 0.16 * s, d1))
+	local p1 = p0 + d1 * 0.34 * s
+	local d2 = Vector3.new(0.3, 0.2, -1).Unit
+	ctx.addToHead(Shapes.ellipsoid("Sprout", Vector3.new(0.17, 0.34, 0.17) * s, color, ctx.model), Shapes.alongY(p1 + d2 * 0.12 * s, d2))
+end
+
+builders.Ponytail = function(ctx, color, accent, _underHat)
+	local cap = addCap(ctx, color, 0.42, -0.35, 1.07)
+	local s = ctx.scale
+	-- A high ponytail: tied on top toward the back, it arcs up and out, then falls.
+	local tie = HeadShape.onCap(cap, Shapes.direction(58, 150), 0.98)
+	ctx.addToHead(Shapes.ellipsoid("HairTie", Vector3.new(0.5, 0.3, 0.5) * s, accent, ctx.model), Shapes.alongY(tie, Vector3.new(0.3, 1, 0.5)))
+	local point = tie
+	local pieces = {
+		{ Vector3.new(0.35, 1, 0.55), Vector3.new(0.62, 0.7, 0.62) },
+		{ Vector3.new(0.8, 0.1, 0.6), Vector3.new(0.6, 0.75, 0.6) },
+		{ Vector3.new(0.6, -0.8, 0.4), Vector3.new(0.52, 0.8, 0.52) },
+		{ Vector3.new(0.3, -1, 0.15), Vector3.new(0.38, 0.6, 0.38) },
+	}
+	for i, piece in pieces do
+		local direction = piece[1].Unit
+		local size = piece[2] * s
+		local name = if i == #pieces then "TailTip" else "Tail"
+		ctx.addToHead(Shapes.ellipsoid(name, size, color, ctx.model), Shapes.alongY(point + direction * size.Y * 0.4, direction))
+		point += direction * size.Y * 0.62
+	end
+end
+
+builders.Curly = function(ctx, color, _accent, underHat)
+	local cap = addCap(ctx, color, 0.44, -0.45, 1.03)
+	local s = ctx.scale
+	-- Spread round puffs evenly over the covered part of the head.
+	local count = 64
+	local golden = math.pi * (3 - math.sqrt(5))
+	local highest = 0
+	for i = 0, count - 1 do
+		local y = 1 - 2 * (i + 0.5) / count
+		local r = math.sqrt(1 - y * y)
+		local direction = Vector3.new(r * math.cos(i * golden), y, r * math.sin(i * golden))
+		if HeadShape.underCap(cap, direction, 0.1) and not (underHat and y > 0.45) then
+			local position = HeadShape.surface(ctx.headRadii, direction, 1.04)
+			local size = (0.6 + 0.16 * hash(i)) * s
+			ctx.addToHead(Shapes.ball("Curl", size, color, ctx.model), CFrame.new(position))
+			highest = math.max(highest, position.Y + size / 2)
+		end
+	end
+	ctx.hairTop = math.max(ctx.hairTop, highest)
+	ctx.hairPuff = 1.22
+end
+
+builders.None = function(ctx)
+	ctx.hairTop = ctx.headRadii.Y
+	ctx.hairPuff = 1
+end
+
+function Hair.build(ctx: Context, piece: Outfits.Piece, underHat: boolean)
+	local builder = builders[piece.style]
+	if not builder then
+		warn(`[Hair] Unknown hair style "{piece.style}"`)
+		builder = builders.None
+	end
+	local color = Palette.resolve(piece.color, Palette.Hair.Chestnut)
+	local accent = Palette.resolve(piece.accent, Palette.Cloth.Coral)
+	builder(ctx, color, accent, underHat)
+end
+
+return Hair
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="9">
+          <Properties>
+            <string name="Name">Hats</string>
+            <string name="Source"><![CDATA[--!strict
+-- Hats, built from parts and sized to sit on top of whatever hair the kid has.
+-- To add a hat: write a builder below and list it in Data/Outfits.luau.
+
+local Shapes = require(script.Parent.Shapes)
+local HeadShape = require(script.Parent.HeadShape)
+local Types = require(script.Parent.Types)
+local Palette = require(script.Parent.Parent.Data.Palette)
+local Outfits = require(script.Parent.Parent.Data.Outfits)
+
+type Context = Types.Context
+type Builder = (ctx: Context, color: Color3, accent: Color3) -> ()
+
+local Hats = {}
+
+local function add(ctx: Context, name: string, size: Vector3, color: Color3, cf: CFrame)
+	ctx.addToHead(Shapes.ellipsoid(name, size, color, ctx.model), cf)
+end
+
+-- How big a hat's dome must be to cover the hair.
+local function domePuff(ctx: Context, extra: number): number
+	return math.max(ctx.hairPuff, 1.05) + extra
+end
+
+local builders: { [string]: Builder } = {}
+
+builders.Tricorn = function(ctx, color, accent)
+	local s, r = ctx.scale, ctx.headRadii
+	local puff = domePuff(ctx, 0.05)
+	local dome = HeadShape.cap(r, 0.66, 0.35, puff)
+	add(ctx, "Crown", dome.size, color, CFrame.new(dome.center))
+
+	-- Three turned-up brim flaps with gold trim. The front one carries a skull badge.
+	local brimY = r.Y * 0.74
+	local brimRadius = r.X * puff * 0.78
+	local flapWidth, flapDepth = r.X * 1.75, r.X * 0.62
+	for i, azimuth in { 0, 120, 240 } do
+		local flap = CFrame.Angles(0, -math.rad(azimuth), 0)
+			* CFrame.new(0, brimY, -brimRadius)
+			* CFrame.Angles(math.rad(62), 0, 0)
+		add(ctx, "Brim", Vector3.new(flapWidth, 0.22 * s, flapDepth), color, flap)
+		add(ctx, "Trim", Vector3.new(flapWidth * 0.95, 0.26 * s, 0.16 * s), accent, flap * CFrame.new(0, 0, -flapDepth * 0.46))
+		if i == 1 then
+			-- The flap's outer face points along its -Y axis.
+			local skull = Shapes.facing((flap * CFrame.new(0, -0.1 * s, 0.02 * s)).Position, -flap.UpVector)
+			add(ctx, "Skull", Vector3.new(0.42, 0.38, 0.16) * s, Palette.Cloth.White, skull)
+			for side = -1, 1, 2 do
+				add(ctx, "SkullEye", Vector3.new(0.1, 0.11, 0.05) * s, Palette.Cloth.Charcoal, skull * CFrame.new(side * 0.08 * s, 0.03 * s, -0.08 * s))
+			end
+		end
+	end
+end
+
+builders.VikingHorns = function(ctx, color, accent)
+	local s, r = ctx.scale, ctx.headRadii
+	local puff = domePuff(ctx, 0.07)
+	local helmet = HeadShape.cap(r, 0.5, -0.05, puff)
+	add(ctx, "Helmet", helmet.size, color, CFrame.new(helmet.center))
+	-- A gold ridge over the top, front to back.
+	add(ctx, "Ridge", Vector3.new(0.32 * s, helmet.size.Y * 1.03, helmet.size.Z * 1.03), accent, CFrame.new(helmet.center))
+
+	-- Horns that curve up, made of four shrinking pieces each.
+	local hornColor = Palette.Cloth.Horn
+	for side = -1, 1, 2 do
+		local point = Vector3.new(side * r.X * puff * 0.88, r.Y * 0.4, 0.05 * s)
+		local pieces = {
+			{ Vector3.new(side * 1, 0.25, 0), Vector3.new(0.54, 0.6, 0.54) },
+			{ Vector3.new(side * 0.75, 0.7, 0), Vector3.new(0.44, 0.55, 0.44) },
+			{ Vector3.new(side * 0.3, 1, 0), Vector3.new(0.33, 0.5, 0.33) },
+			{ Vector3.new(0, 1, 0), Vector3.new(0.21, 0.4, 0.21) },
+		}
+		for _, piece in pieces do
+			local direction = piece[1].Unit
+			local size = piece[2] * s
+			add(ctx, "Horn", size, hornColor, Shapes.alongY(point + direction * size.Y * 0.4, direction))
+			point += direction * size.Y * 0.62
+		end
+	end
+end
+
+builders.Cap = function(ctx, color, accent)
+	local s, r = ctx.scale, ctx.headRadii
+	local puff = domePuff(ctx, 0.04)
+	local dome = HeadShape.cap(r, 0.58, 0.05, puff)
+	add(ctx, "Dome", dome.size, color, CFrame.new(dome.center))
+	-- The visor is worn cocked to one side so it shows from the front.
+	local visor = CFrame.Angles(0, -math.rad(40), 0)
+		* CFrame.new(0, r.Y * 0.56, -r.Z * puff * 0.92)
+		* CFrame.Angles(math.rad(-14), 0, 0)
+	add(ctx, "Visor", Vector3.new(r.X * 1.25, 0.16 * s, r.Z * 1.3), color, visor)
+	add(ctx, "Button", Vector3.new(0.26, 0.16, 0.26) * s, accent, CFrame.new(dome.center + Vector3.new(0, dome.size.Y / 2 - 0.02 * s, 0)))
+end
+
+builders.Crown = function(ctx, color, accent)
+	local s = ctx.scale
+	local base = CFrame.new(0, ctx.hairTop - 0.14 * s, 0) * CFrame.Angles(0, 0, math.rad(-10))
+	add(ctx, "Band", Vector3.new(1.2, 0.42, 1.2) * s, color, base)
+	for i = 0, 4 do
+		local angle = math.rad(i * 72)
+		local out = Vector3.new(math.sin(angle), 0, -math.cos(angle))
+		local direction = (Vector3.yAxis + out * 0.3).Unit
+		local foot = Vector3.new(out.X * 0.48 * s, 0.12 * s, out.Z * 0.48 * s)
+		local tip = foot + direction * 0.44 * s
+		add(ctx, "Point", Vector3.new(0.2, 0.46, 0.2) * s, color, base * Shapes.alongY(foot + direction * 0.2 * s, direction))
+		add(ctx, "Tip", Vector3.new(0.17, 0.17, 0.17) * s, color, base * CFrame.new(tip))
+	end
+	add(ctx, "Gem", Vector3.new(0.24, 0.24, 0.16) * s, accent, base * CFrame.new(0, 0, -0.6 * s))
+end
+
+builders.Flower = function(ctx, color, accent)
+	local s = ctx.scale
+	local direction = Shapes.direction(38, 62)
+	local base = if ctx.cap
+		then HeadShape.onCap(ctx.cap, direction, 1.0)
+		else HeadShape.surface(ctx.headRadii, direction, 1.0)
+	local facing = (base.Unit + Vector3.new(0, 0, -0.5)).Unit
+	local flower = Shapes.facing(base + facing * 0.05 * s, facing)
+	for i = 0, 4 do
+		local angle = math.rad(i * 72 + 90)
+		add(ctx, "Petal", Vector3.new(0.4, 0.4, 0.2) * s, color, flower * CFrame.new(math.cos(angle) * 0.3 * s, math.sin(angle) * 0.3 * s, 0))
+	end
+	add(ctx, "Middle", Vector3.new(0.3, 0.3, 0.22) * s, accent, flower * CFrame.new(0, 0, -0.07 * s))
+end
+
+function Hats.build(ctx: Context, piece: Outfits.Piece?)
+	if not piece or piece.style == "None" then
+		return
+	end
+	local builder = builders[piece.style]
+	if not builder then
+		warn(`[Hats] Unknown hat "{piece.style}"`)
+		return
+	end
+	local defaults = Outfits.find(Outfits.Hats, piece.style)
+	local color = Palette.resolve(piece.color or (defaults and defaults.color), Palette.Cloth.Charcoal)
+	local accent = Palette.resolve(piece.accent or (defaults and defaults.accent), Palette.Cloth.Gold)
+	builder(ctx, color, accent)
+end
+
+-- Hats that cover the top of the head (spiky hair hides its top spikes under these).
+function Hats.coversTop(piece: Outfits.Piece?): boolean
+	return piece ~= nil and piece.style ~= "None" and piece.style ~= "Flower"
+end
+
+return Hats
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="10">
+          <Properties>
+            <string name="Name">HeadShape</string>
+            <string name="Source"><![CDATA[--!strict
+-- Geometry for things that sit on the head (hair, hats, goggles).
+-- All positions are in "head space": the head's center is the origin,
+-- +Y is up and the face looks toward -Z.
+
+local HeadShape = {}
+
+-- A hair cap is a slightly bigger copy of the head, nudged up and back so
+-- that it only covers the top. Where it pokes out of the head is the hairline.
+export type Cap = {
+	center: Vector3, -- studs, head space
+	size: Vector3, -- studs
+	normal: Vector3, -- hairline plane (in "unit head" space)
+	offset: number,
+	puff: number,
+}
+
+-- radii: half the head size.
+-- front/back: hairline height at the forehead and at the back of the head,
+--   from -1 (bottom of the head) to 1 (top).
+-- puff: how much bigger than the head the cap is (1.05 = thin, 1.15 = fluffy).
+function HeadShape.cap(radii: Vector3, front: number, back: number, puff: number): Cap
+	local sf, sb = math.sqrt(1 - front * front), math.sqrt(1 - back * back)
+	local theta = math.atan2(front - back, sf + sb)
+	local c, s = math.cos(theta), math.sin(theta)
+	local offset = front * c - sf * s
+	local distance = offset + math.sqrt(offset * offset + puff * puff - 1)
+	local center = Vector3.new(0, distance * c, distance * s)
+	return {
+		center = center * radii,
+		size = radii * 2 * puff,
+		normal = Vector3.new(0, c, s),
+		offset = offset,
+		puff = puff,
+	}
+end
+
+-- Point on the head's surface in a direction, pushed out by `lift` (1 = on the skin).
+function HeadShape.surface(radii: Vector3, direction: Vector3, lift: number?): Vector3
+	local d = direction.Unit
+	return Vector3.new(d.X * radii.X, d.Y * radii.Y, d.Z * radii.Z) * (lift or 1)
+end
+
+-- Outward normal of the head's surface at a point.
+function HeadShape.normal(radii: Vector3, point: Vector3): Vector3
+	return Vector3.new(
+		point.X / (radii.X * radii.X),
+		point.Y / (radii.Y * radii.Y),
+		point.Z / (radii.Z * radii.Z)
+	).Unit
+end
+
+-- Is this direction (from the head's center) covered by the cap?
+function HeadShape.underCap(cap: Cap, direction: Vector3, margin: number?): boolean
+	return direction.Unit:Dot(cap.normal) >= cap.offset + (margin or 0)
+end
+
+-- Point on the cap's surface, going out from the cap's own center.
+function HeadShape.onCap(cap: Cap, direction: Vector3, lift: number?): Vector3
+	local d = direction.Unit
+	local r = cap.size / 2
+	return cap.center + Vector3.new(d.X * r.X, d.Y * r.Y, d.Z * r.Z) * (lift or 1)
+end
+
+return HeadShape
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="11">
+          <Properties>
+            <string name="Name">KidRig</string>
+            <string name="Source"><![CDATA[--!strict
+-- A tiny skeleton for the kids. Every part is anchored and follows a "bone"
+-- (Body, Head, ArmL, ...). Each frame the animator hands us a Pose and we
+-- move all the parts at once. Squash and stretch scales the whole kid
+-- about their feet, so hats, hair and clothes squash along with the body.
+
+local KidRig = {}
+
+export type Bone = {
+	name: string,
+	parent: string?,
+	pivot: CFrame, -- rest transform relative to the parent bone
+}
+
+export type Attached = {
+	part: BasePart,
+	bone: string,
+	offset: CFrame, -- relative to the bone
+	size: Vector3, -- rest size
+	mesh: SpecialMesh?,
+	-- Parts that carry a SurfaceGui (the head, emblems) squash by changing
+	-- their Size so the drawing squashes with them.
+	squashBySize: boolean,
+}
+
+export type Rig = {
+	root: BasePart,
+	bones: { [string]: Bone },
+	order: { string },
+	attached: { Attached },
+	restSpace: { [string]: CFrame }, -- each bone at rest, in root space
+	lastSquash: Vector2,
+	parts: { BasePart },
+	frames: { CFrame },
+}
+
+export type Pose = {
+	root: CFrame, -- world CFrame of the point between the feet
+	squash: Vector2?, -- X = width multiplier, Y = height multiplier (1, 1 = rest)
+	bones: { [string]: CFrame }?, -- extra rotation for each bone
+}
+
+function KidRig.new(root: BasePart): Rig
+	local rig: Rig = {
+		root = root,
+		bones = {},
+		order = {},
+		attached = {},
+		restSpace = { Root = CFrame.identity },
+		lastSquash = Vector2.new(1, 1),
+		parts = { root },
+		frames = { CFrame.identity },
+	}
+	rig.bones.Root = { name = "Root", parent = nil, pivot = CFrame.identity }
+	table.insert(rig.order, "Root")
+	return rig
+end
+
+-- Bones must be added parent first.
+function KidRig.addBone(rig: Rig, name: string, parent: string, pivot: CFrame)
+	assert(rig.bones[parent], `parent bone {parent} must be added before {name}`)
+	rig.bones[name] = { name = name, parent = parent, pivot = pivot }
+	rig.restSpace[name] = rig.restSpace[parent] * pivot
+	table.insert(rig.order, name)
+end
+
+-- Attach a part to a bone. `offset` is in the bone's own space.
+function KidRig.attach(rig: Rig, part: BasePart, bone: string, offset: CFrame, squashBySize: boolean?)
+	assert(rig.bones[bone], `unknown bone {bone}`)
+	table.insert(rig.attached, {
+		part = part,
+		bone = bone,
+		offset = offset,
+		size = part.Size,
+		mesh = part:FindFirstChildOfClass("SpecialMesh"),
+		squashBySize = squashBySize == true,
+	})
+	table.insert(rig.parts, part)
+	table.insert(rig.frames, CFrame.identity)
+end
+
+-- Attach a part using a CFrame in root space (where the kid stands at the origin facing -Z).
+function KidRig.attachInRootSpace(rig: Rig, part: BasePart, bone: string, rootSpace: CFrame, squashBySize: boolean?)
+	KidRig.attach(rig, part, bone, rig.restSpace[bone]:Inverse() * rootSpace, squashBySize)
+end
+
+-- How much a part stretches along one of its own axes when the kid is squashed.
+local function axisScale(axis: Vector3, squash: Vector2): number
+	local x, y = axis.X * squash.X, axis.Y * squash.Y
+	return math.sqrt(x * x + y * y + axis.Z * axis.Z)
+end
+
+function KidRig.apply(rig: Rig, pose: Pose)
+	local squash = pose.squash or Vector2.new(1, 1)
+	local boneAnim = pose.bones
+	local boneSpace: { [string]: CFrame } = {}
+	for _, name in rig.order do
+		local bone = rig.bones[name]
+		local parentSpace = if bone.parent then boneSpace[bone.parent] else CFrame.identity
+		local extra = boneAnim and boneAnim[name]
+		boneSpace[name] = if extra then parentSpace * bone.pivot * extra else parentSpace * bone.pivot
+	end
+
+	local squashed = math.abs(squash.X - 1) > 1e-4 or math.abs(squash.Y - 1) > 1e-4
+	-- Resizing every part is the expensive bit, so skip tiny changes (idle breathing).
+	local target = if squashed then squash else Vector2.one
+	local squashChanged = (target - rig.lastSquash).Magnitude > 0.004
+		or (not squashed and rig.lastSquash ~= Vector2.one)
+	if squashChanged then
+		rig.lastSquash = target
+	end
+
+	local rootCF = pose.root
+	rig.frames[1] = rootCF
+	for i, item in rig.attached do
+		local placed = boneSpace[item.bone] * item.offset
+		if squashed then
+			local p = placed.Position
+			placed = CFrame.new(p.X * squash.X, p.Y * squash.Y, p.Z) * placed.Rotation
+		end
+		rig.frames[i + 1] = rootCF * placed
+
+		if squashChanged then
+			local scale = if squashed
+				then Vector3.new(
+					axisScale(placed.XVector, squash),
+					axisScale(placed.YVector, squash),
+					axisScale(placed.ZVector, squash)
+				)
+				else Vector3.one
+			if item.squashBySize then
+				item.part.Size = item.size * scale
+			elseif item.mesh then
+				item.mesh.Scale = scale
+			end
+		end
+	end
+
+	if rig.root:IsDescendantOf(workspace) then
+		workspace:BulkMoveTo(rig.parts, rig.frames, Enum.BulkMoveMode.FireCFrameChanged)
+	else
+		for i, part in rig.parts do
+			part.CFrame = rig.frames[i]
+		end
+	end
+end
+
+return KidRig
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">Outline</string>
+            <string name="Source"><![CDATA[--!strict
+-- Thick dark cartoon outlines using Roblox Highlights (fill off, outline on).
+-- Roblox only draws about 31 Highlights at once, so this keeps count and
+-- refuses to add more than Config.Outline.MaxHighlights.
+
+local Config = require(script.Parent.Parent.Config)
+
+local Outline = {}
+
+local active: { [Highlight]: boolean } = {}
+
+-- How many outlines exist right now (forgets ones that were destroyed).
+function Outline.count(): number
+	local n = 0
+	for highlight in active do
+		if highlight.Parent then
+			n += 1
+		else
+			active[highlight] = nil
+		end
+	end
+	return n
+end
+
+function Outline.add(target: Instance): Highlight?
+	if Outline.count() >= Config.Outline.MaxHighlights then
+		warn("[Outline] Highlight limit reached; this one will have no outline")
+		return nil
+	end
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "Outline"
+	highlight.FillTransparency = 1
+	highlight.OutlineColor = Config.Outline.Color
+	highlight.OutlineTransparency = Config.Outline.Transparency
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+	highlight.Adornee = target
+	highlight.Parent = target
+	active[highlight] = true
+	return highlight
+end
+
+function Outline.remove(target: Instance)
+	for _, child in target:GetChildren() do
+		if child:IsA("Highlight") then
+			active[child] = nil
+			child:Destroy()
+		end
+	end
+end
+
+return Outline
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="13">
+          <Properties>
+            <string name="Name">Shapes</string>
+            <string name="Source"><![CDATA[--!strict
+-- Small helpers for making the rounded cartoon parts the kids are built from.
+-- Every shape is an ellipsoid (a Part with a sphere SpecialMesh), because
+-- ellipsoids can be stretched in any direction and squashed while animating.
+
+local Shapes = {}
+
+local function basePart(name: string, size: Vector3, color: Color3): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.Color = color
+	part.Material = Enum.Material.SmoothPlastic
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.Massless = true
+	part.CastShadow = true
+	return part
+end
+
+-- An egg/ball/bean shape that exactly fills `size`.
+function Shapes.ellipsoid(name: string, size: Vector3, color: Color3, parent: Instance?): Part
+	local part = basePart(name, size, color)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Parent = part
+	part.Parent = parent
+	return part
+end
+
+function Shapes.ball(name: string, diameter: number, color: Color3, parent: Instance?): Part
+	return Shapes.ellipsoid(name, Vector3.new(diameter, diameter, diameter), color, parent)
+end
+
+-- A plain invisible box, used as the root of a kid and to carry flat drawings (SurfaceGuis).
+function Shapes.carrier(name: string, size: Vector3, parent: Instance?): Part
+	local part = basePart(name, size, Color3.new(1, 1, 1))
+	part.Transparency = 1
+	part.CastShadow = false
+	part.Parent = parent
+	return part
+end
+
+function Shapes.block(name: string, size: Vector3, color: Color3, parent: Instance?): Part
+	local part = basePart(name, size, color)
+	part.Parent = parent
+	return part
+end
+
+-- A CFrame at `position` whose local Y axis points along `direction`.
+function Shapes.alongY(position: Vector3, direction: Vector3): CFrame
+	local up = direction.Unit
+	local helper = if math.abs(up.Y) > 0.98 then Vector3.xAxis else Vector3.yAxis
+	local right = helper:Cross(up).Unit
+	return CFrame.fromMatrix(position, right, up)
+end
+
+-- A CFrame at `position` whose front (-Z, where SurfaceGuis and discs face) points along `direction`.
+function Shapes.facing(position: Vector3, direction: Vector3): CFrame
+	local look = direction.Unit
+	local helper = if math.abs(look.Y) > 0.98 then Vector3.zAxis else Vector3.yAxis
+	local right = look:Cross(helper).Unit
+	local up = right:Cross(look).Unit
+	return CFrame.fromMatrix(position, right, up)
+end
+
+-- Direction from spherical angles, in a kid's own space where the front is -Z.
+-- elevation: 0 = level, 90 = straight up. azimuth: 0 = front, +90 = the kid's right (+X).
+function Shapes.direction(elevation: number, azimuth: number): Vector3
+	local el, az = math.rad(elevation), math.rad(azimuth)
+	return Vector3.new(math.cos(el) * math.sin(az), math.sin(el), -math.cos(el) * math.cos(az))
+end
+
+return Shapes
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="14">
+          <Properties>
+            <string name="Name">Types</string>
+            <string name="Source"><![CDATA[--!strict
+-- Shared types for the character modules.
+
+local HeadShape = require(script.Parent.HeadShape)
+
+-- Measurements of one kid, in studs. Heights are measured up from the feet.
+export type Dims = {
+	scale: number,
+	head: Vector3,
+	body: Vector3,
+	leg: Vector3,
+	arm: Vector3,
+	hand: Vector3,
+	shoe: Vector3,
+	feet: Vector3,
+	legSpread: number,
+	legTopY: number,
+	bodyBottomY: number,
+	bodyTopY: number,
+	neckY: number,
+	headCenterY: number,
+	height: number,
+	shoulderY: number,
+	shoulderX: number,
+}
+
+-- Handed to the hair, hat and accessory builders.
+export type Context = {
+	model: Model,
+	dims: Dims,
+	scale: number,
+	skin: Color3,
+	headRadii: Vector3,
+	-- Filled in by the hair builder:
+	cap: HeadShape.Cap?,
+	hairTop: number, -- head space height of the top of the hair
+	hairPuff: number, -- how far the hair sticks out (1 = bald)
+	-- Attach a part. Head space has its origin at the head's center.
+	addToHead: (part: BasePart, headSpace: CFrame) -> (),
+	addToBone: (part: BasePart, bone: string, boneSpace: CFrame, squashBySize: boolean?) -> (),
+	addInRootSpace: (part: BasePart, bone: string, rootSpace: CFrame) -> (),
+}
+
+return {}
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="15">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[--!strict
+-- Every number you might want to tune lives here.
+-- Sizes are in studs, angles in degrees, times in seconds.
+
+local Config = {}
+
+Config.GameName = "Splash Squad"
+
+Config.World = {
+	WaterY = 0, -- height of the water surface
+	Gravity = 55, -- studs/s^2, used for shots and knockback flights
+	PlaneZ = 0, -- the fight happens on this Z plane (2.5D)
+}
+
+-- Chibi body proportions, before each kid's own scale is applied.
+-- The head is about as big as the rest of the body.
+Config.Kid = {
+	HeadSize = Vector3.new(2.5, 2.3, 2.3), -- width, height, depth (an egg-ish ball)
+	HeadSink = 0.3, -- how far the head overlaps the top of the body
+	BodySize = Vector3.new(1.6, 1.7, 1.36), -- a short bean
+	LegSize = Vector3.new(0.56, 0.82, 0.56),
+	LegSpread = 0.38, -- hip distance from the middle
+	ArmSize = Vector3.new(0.46, 1.0, 0.46),
+	ArmRestAngle = 16, -- arms hang slightly away from the body
+	ShoulderDrop = 0.36, -- shoulders sit this far below the top of the body
+	HandSize = Vector3.new(0.52, 0.54, 0.48), -- little mittens
+	ShoeSize = Vector3.new(0.64, 0.38, 0.84),
+	FeetSize = Vector3.new(0.5, 0.3, 0.66), -- bare feet are a bit smaller than shoes
+	FacingAngle = 16, -- kids face the camera, turned this far toward their target
+}
+
+-- Where things go on the face, as fractions of the face (0..1 across, 0..1 down).
+Config.Face = {
+	PixelsPerStud = 100,
+	LightInfluence = 0.55, -- 0 = face drawn at full brightness, 1 = shaded like the head
+	EyeY = 0.56,
+	EyeSpacing = 0.34, -- distance between the eye centers
+	EyeWidth = 0.15,
+	EyeHeight = 0.25,
+	ShineSize = 0.45, -- shine dot size, as a fraction of the eye width
+	BrowY = 0.355,
+	BrowLength = 0.13,
+	LineThickness = 0.024, -- brows, smiles, closed eyes
+	BlushY = 0.7,
+	BlushSpacing = 0.56,
+	BlushWidth = 0.14,
+	BlushHeight = 0.075,
+	MouthY = 0.765,
+	MouthWidth = 0.15,
+	BlinkEvery = { 2.2, 5.0 }, -- random wait between blinks
+	BlinkTime = 0.11,
+	SpiralSpeed = 540, -- dizzy eyes spin speed (degrees per second)
+}
+
+Config.Outline = {
+	Color = Color3.fromRGB(34, 22, 36),
+	Transparency = 0,
+	MaxHighlights = 30, -- Roblox draws at most 31 Highlights at once
+}
+
+Config.Anim = {
+	IdleBobHeight = 0.1,
+	IdleBobSpeed = 2.4, -- radians per second
+	IdleSway = 2.5, -- degrees
+	BreathSquash = 0.025,
+
+	AimLean = 7,
+	FireTime = 0.55,
+	FireLean = 12,
+	FireSquash = 0.16,
+	FireFaceTime = 0.75,
+
+	HitTime = 0.55,
+	HitLean = 22,
+	HitHop = 0.6,
+	HitFaceTime = 0.8,
+
+	SpinSpeed = 760, -- degrees per second while flying
+	FlailSpeed = 22, -- radians per second for flailing arms and legs
+
+	WaterFloatTime = 3.0, -- how long a kid bobs in the water before sinking
+	WaterBob = 0.16,
+	SinkTime = 1.3,
+
+	WinHopHeight = 1.4,
+	WinHopTime = 0.42,
+
+	LandSquash = 0.22,
+	DropInHeight = 9,
+}
+
+Config.Splash = {
+	Droplets = 16,
+	DropletSize = { 0.25, 0.55 },
+	DropletSpeed = { 10, 22 },
+	RingBlobs = 18,
+	RingStartRadius = 0.6,
+	RingEndRadius = 3.6,
+	RingTime = 0.8,
+	ColumnHeight = 3.4,
+	ColumnTime = 0.55,
+	WaterColor = Color3.fromRGB(150, 236, 246),
+	FoamColor = Color3.fromRGB(250, 255, 255),
+}
+
+Config.Camera = {
+	FieldOfView = 40,
+	Pitch = 7, -- looking slightly down at the water
+	Smoothness = 6, -- higher = snappier camera
+}
+
+Config.Lighting = {
+	ClockTime = 14.2,
+	GeographicLatitude = 23,
+	Brightness = 2.6,
+	Ambient = Color3.fromRGB(112, 112, 128),
+	OutdoorAmbient = Color3.fromRGB(170, 172, 190),
+	ShadowSoftness = 0.6,
+	EnvironmentDiffuseScale = 0.6,
+	EnvironmentSpecularScale = 0.15,
+	ExposureCompensation = 0.12,
+	ColorCorrection = {
+		Saturation = 0.2,
+		Contrast = 0.07,
+		Brightness = 0.02,
+		TintColor = Color3.fromRGB(255, 251, 244),
+	},
+	Bloom = {
+		Intensity = 0.25,
+		Size = 22,
+		Threshold = 1.7,
+	},
+	Atmosphere = {
+		Density = 0.24,
+		Offset = 0.2,
+		Color = Color3.fromRGB(205, 232, 255),
+		Decay = Color3.fromRGB(140, 196, 240),
+		Glare = 0.1,
+		Haze = 0.6,
+	},
+}
+
+return Config
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="16">
+        <Properties>
+          <string name="Name">Data</string>
+        </Properties>
+        <Item class="ModuleScript" referent="17">
+          <Properties>
+            <string name="Name">Characters</string>
+            <string name="Source"><![CDATA[--!strict
+-- The kids. Each one is just an outfit (see Data/Outfits.luau), so you can
+-- restyle anyone by editing this table.
+
+local Outfits = require(script.Parent.Outfits)
+
+export type Character = {
+	id: string,
+	name: string,
+	blurb: string,
+	outfit: Outfits.Outfit,
+}
+
+local Characters = {}
+
+-- The two hero kids for solo play.
+Characters.Heroes = {
+	{
+		id = "Pip",
+		name = "Pip",
+		blurb = "Small, brave, and always in swim trunks.",
+		outfit = {
+			skin = "Peach",
+			hair = { style = "Spiky", color = "Chestnut" },
+			top = { style = "None" },
+			bottom = { style = "Trunks", color = "Coral", accent = "White" },
+			shoes = { style = "Bare" },
+			goggles = { style = "Goggles", color = "Glass", accent = "Aqua" },
+			proportions = { scale = 0.9 },
+		},
+	},
+	{
+		id = "Max",
+		name = "Captain Max",
+		blurb = "Pip's big sibling, in a homemade superhero costume.",
+		outfit = {
+			skin = "Peach",
+			hair = { style = "BowlCut", color = "Chestnut" },
+			top = { style = "Suit", color = "Royal", accent = "Sunny" },
+			bottom = { style = "Trunks", color = "Red", accent = "Red" },
+			shoes = { style = "Boots", color = "Red" },
+			cape = { style = "Cape", color = "Red", accent = "Sunny" },
+			mask = "Red",
+			emblem = { letter = "M", color = "Sunny", ink = "Red" },
+			proportions = { scale = 1.06, bodyStretch = 1.2, headScale = 0.96 },
+		},
+	},
+} :: { Character }
+
+-- Extra kids that show off the outfit system on the test stage.
+Characters.Extras = {
+	{
+		id = "Polly",
+		name = "Polly",
+		blurb = "Pirate fan.",
+		outfit = {
+			skin = "Honey",
+			hair = { style = "Ponytail", color = "Ginger" },
+			hat = { style = "Tricorn", color = "Charcoal", accent = "Gold" },
+			top = { style = "Stripes", color = "White", accent = "Red" },
+			bottom = { style = "Shorts", color = "Navy" },
+			shoes = { style = "Sneakers", color = "Red", accent = "White" },
+		},
+	},
+	{
+		id = "Bjorn",
+		name = "Bjorn",
+		blurb = "Tiny Viking.",
+		outfit = {
+			skin = "Rosy",
+			hair = { style = "Curly", color = "Blond" },
+			hat = { style = "VikingHorns", color = "Steel", accent = "Gold" },
+			top = { style = "Tee", color = "Grass" },
+			bottom = { style = "Pants", color = "Brown" },
+			shoes = { style = "Boots", color = "Brown" },
+		},
+	},
+	{
+		id = "Kai",
+		name = "Kai",
+		blurb = "Never without a life ring.",
+		outfit = {
+			skin = "Caramel",
+			hair = { style = "Spiky", color = "Ink" },
+			hat = { style = "Cap", color = "Royal", accent = "White" },
+			top = { style = "Tee", color = "Tangerine" },
+			bottom = { style = "Trunks", color = "Aqua", accent = "White" },
+			shoes = { style = "Sneakers", color = "Sky", accent = "White" },
+			lifeRing = { style = "LifeRing", color = "Red", accent = "White" },
+		},
+	},
+	{
+		id = "Rae",
+		name = "Rae",
+		blurb = "Beach royalty.",
+		outfit = {
+			skin = "Cocoa",
+			hair = { style = "Ponytail", color = "Lilac" },
+			hat = { style = "Crown", color = "Gold", accent = "Red" },
+			top = { style = "Tee", color = "Lavender" },
+			bottom = { style = "Shorts", color = "Pink" },
+			shoes = { style = "Sneakers", color = "White", accent = "Pink" },
+		},
+	},
+	{
+		id = "Mo",
+		name = "Mo",
+		blurb = "Flower power.",
+		outfit = {
+			skin = "Espresso",
+			hair = { style = "Curly", color = "Ink" },
+			hat = { style = "Flower", color = "Pink", accent = "Sunny" },
+			top = { style = "Tee", color = "Mint" },
+			bottom = { style = "Trunks", color = "Coral", accent = "White" },
+			shoes = { style = "Bare" },
+		},
+	},
+} :: { Character }
+
+function Characters.get(id: string): Character?
+	for _, list in { Characters.Heroes, Characters.Extras } do
+		for _, character in list do
+			if character.id == id then
+				return character
+			end
+		end
+	end
+	return nil
+end
+
+return Characters
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">Outfits</string>
+            <string name="Source"><![CDATA[--!strict
+-- The wardrobe: every hair style, hat, top, bottom, shoe and accessory a kid can wear.
+-- To add a new color option, add it to Palette and list it here.
+-- To add a new hair style or hat, add an entry here and a matching builder
+-- in Character/Hair.luau or Character/Hats.luau.
+
+local Outfits = {}
+
+export type ColorRef = string | Color3
+
+export type Piece = {
+	style: string,
+	color: ColorRef?,
+	accent: ColorRef?,
+}
+
+export type Outfit = {
+	skin: ColorRef,
+	hair: Piece,
+	hat: Piece?,
+	top: Piece,
+	bottom: Piece,
+	shoes: Piece,
+	cape: Piece?, -- style is ignored, color = cape, accent = knot
+	goggles: Piece?, -- color = lenses, accent = strap
+	lifeRing: Piece?, -- color = ring, accent = stripes
+	mask: ColorRef?, -- superhero eye mask drawn on the face
+	emblem: { letter: string, color: ColorRef?, ink: ColorRef? }?,
+	proportions: {
+		scale: number?, -- overall size (1 = normal)
+		bodyStretch: number?, -- taller body and legs
+		headScale: number?,
+	}?,
+}
+
+export type CatalogItem = {
+	id: string,
+	name: string,
+	price: number,
+	color: ColorRef?,
+	accent: ColorRef?,
+}
+
+Outfits.HairStyles = {
+	{ id = "Spiky", name = "Spiky", price = 0 },
+	{ id = "BowlCut", name = "Bowl Cut", price = 0 },
+	{ id = "Ponytail", name = "Ponytail", price = 40 },
+	{ id = "Curly", name = "Curly", price = 40 },
+} :: { CatalogItem }
+
+Outfits.Hats = {
+	{ id = "None", name = "No Hat", price = 0 },
+	{ id = "Tricorn", name = "Pirate Hat", price = 150, color = "Charcoal", accent = "Gold" },
+	{ id = "VikingHorns", name = "Viking Helmet", price = 200, color = "Steel", accent = "Gold" },
+	{ id = "Cap", name = "Sporty Cap", price = 80, color = "Royal", accent = "White" },
+	{ id = "Crown", name = "Tiny Crown", price = 300, color = "Gold", accent = "Red" },
+	{ id = "Flower", name = "Hair Flower", price = 60, color = "Pink", accent = "Sunny" },
+} :: { CatalogItem }
+
+Outfits.Tops = {
+	{ id = "None", name = "No Shirt", price = 0 },
+	{ id = "Tee", name = "T-Shirt", price = 0 },
+	{ id = "Stripes", name = "Sailor Stripes", price = 60, accent = "Red" },
+	{ id = "Suit", name = "Hero Suit", price = 250, accent = "Sunny" },
+} :: { CatalogItem }
+
+Outfits.Bottoms = {
+	{ id = "Trunks", name = "Swim Trunks", price = 0, accent = "White" },
+	{ id = "Shorts", name = "Shorts", price = 0 },
+	{ id = "Pants", name = "Long Pants", price = 40 },
+} :: { CatalogItem }
+
+Outfits.Shoes = {
+	{ id = "Bare", name = "Bare Feet", price = 0 },
+	{ id = "Sneakers", name = "Sneakers", price = 50, accent = "White" },
+	{ id = "Boots", name = "Boots", price = 80 },
+} :: { CatalogItem }
+
+Outfits.Accessories = {
+	{ id = "Cape", name = "Towel Cape", price = 200, color = "Red", accent = "Sunny" },
+	{ id = "Goggles", name = "Swim Goggles", price = 70, color = "Glass", accent = "Aqua" },
+	{ id = "LifeRing", name = "Life Ring", price = 90, color = "Red", accent = "White" },
+	{ id = "Mask", name = "Hero Mask", price = 120, color = "Red" },
+} :: { CatalogItem }
+
+-- Color choices offered in the wardrobe.
+Outfits.SkinTones = { "Peach", "Rosy", "Honey", "Caramel", "Cocoa", "Espresso" }
+Outfits.HairColors = { "Chestnut", "Ginger", "Blond", "Ink", "Mocha", "Bubblegum", "Lilac", "Seafoam" }
+Outfits.ClothColors = {
+	"White",
+	"Navy",
+	"Royal",
+	"Sky",
+	"Aqua",
+	"Mint",
+	"Grass",
+	"Sunny",
+	"Tangerine",
+	"Coral",
+	"Red",
+	"Pink",
+	"Lavender",
+	"Grape",
+	"Brown",
+	"Charcoal",
+}
+
+function Outfits.find(list: { CatalogItem }, id: string): CatalogItem?
+	for _, item in list do
+		if item.id == id then
+			return item
+		end
+	end
+	return nil
+end
+
+-- Deep copy, so editing one kid's outfit never changes another's.
+function Outfits.copy(outfit: Outfit): Outfit
+	local function deep(value: any): any
+		if type(value) ~= "table" then
+			return value
+		end
+		local out = {}
+		for k, v in value do
+			out[k] = deep(v)
+		end
+		return out
+	end
+	return deep(outfit)
+end
+
+return Outfits
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="19">
+          <Properties>
+            <string name="Name">Palette</string>
+            <string name="Source"><![CDATA[--!strict
+-- Named colors used by outfits and characters.
+-- Outfit data refers to colors by these names (e.g. "Coral"), so you can
+-- retune a color here and every kid using it updates.
+
+local Palette = {}
+
+Palette.Skin = {
+	Peach = Color3.fromRGB(255, 214, 186),
+	Rosy = Color3.fromRGB(250, 196, 170),
+	Honey = Color3.fromRGB(232, 178, 128),
+	Caramel = Color3.fromRGB(196, 138, 92),
+	Cocoa = Color3.fromRGB(150, 100, 68),
+	Espresso = Color3.fromRGB(112, 74, 52),
+}
+
+Palette.Hair = {
+	Chestnut = Color3.fromRGB(122, 74, 44),
+	Ginger = Color3.fromRGB(226, 112, 46),
+	Blond = Color3.fromRGB(250, 206, 96),
+	Ink = Color3.fromRGB(46, 40, 52),
+	Mocha = Color3.fromRGB(86, 56, 40),
+	Bubblegum = Color3.fromRGB(255, 130, 186),
+	Lilac = Color3.fromRGB(170, 132, 236),
+	Seafoam = Color3.fromRGB(96, 214, 182),
+}
+
+-- Clothes, hats, rafts and anything else.
+Palette.Cloth = {
+	White = Color3.fromRGB(250, 250, 248),
+	Cream = Color3.fromRGB(246, 234, 204),
+	Charcoal = Color3.fromRGB(52, 50, 62),
+	Navy = Color3.fromRGB(38, 62, 140),
+	Royal = Color3.fromRGB(52, 108, 230),
+	Sky = Color3.fromRGB(118, 196, 255),
+	Aqua = Color3.fromRGB(64, 214, 222),
+	Mint = Color3.fromRGB(132, 232, 170),
+	Grass = Color3.fromRGB(86, 192, 86),
+	Leaf = Color3.fromRGB(46, 140, 82),
+	Sunny = Color3.fromRGB(255, 214, 58),
+	Gold = Color3.fromRGB(255, 186, 36),
+	Tangerine = Color3.fromRGB(255, 140, 40),
+	Coral = Color3.fromRGB(255, 106, 96),
+	Red = Color3.fromRGB(230, 54, 60),
+	Cherry = Color3.fromRGB(196, 30, 58),
+	Pink = Color3.fromRGB(255, 150, 196),
+	Lavender = Color3.fromRGB(176, 146, 240),
+	Grape = Color3.fromRGB(122, 74, 196),
+	Brown = Color3.fromRGB(128, 82, 52),
+	Tan = Color3.fromRGB(214, 170, 114),
+	Steel = Color3.fromRGB(168, 178, 192),
+	Horn = Color3.fromRGB(246, 236, 206),
+	Glass = Color3.fromRGB(120, 220, 255),
+}
+
+-- Face drawing colors.
+Palette.Face = {
+	Eye = Color3.fromRGB(38, 30, 52),
+	Shine = Color3.fromRGB(255, 255, 255),
+	Brow = Color3.fromRGB(58, 40, 40),
+	Blush = Color3.fromRGB(255, 120, 150),
+	MouthLine = Color3.fromRGB(70, 34, 40),
+	MouthInside = Color3.fromRGB(120, 30, 46),
+	Tongue = Color3.fromRGB(255, 120, 136),
+	Teeth = Color3.fromRGB(255, 255, 255),
+	Tear = Color3.fromRGB(130, 210, 255),
+}
+
+-- Every color name must be unique across the tables above.
+do
+	local seen = {}
+	local groups: { { [string]: Color3 } } = { Palette.Skin, Palette.Hair, Palette.Cloth, Palette.Face }
+	for _, group in groups do
+		for name in group do
+			if seen[name] then
+				warn(`[Palette] Color name "{name}" is used twice; rename one of them`)
+			end
+			seen[name] = true
+		end
+	end
+end
+
+-- Look up a color by name in any of the tables above, or pass a Color3 through.
+function Palette.resolve(value: string | Color3 | nil, fallback: Color3?): Color3
+	if typeof(value) == "Color3" then
+		return value
+	end
+	if type(value) == "string" then
+		local found = Palette.Cloth[value] or Palette.Hair[value] or Palette.Skin[value] or Palette.Face[value]
+		if found then
+			return found
+		end
+		warn(`[Palette] Unknown color name "{value}"`)
+	end
+	return fallback or Color3.fromRGB(255, 0, 255)
+end
+
+return Palette
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="20">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="21">
+      <Properties>
+        <string name="Name">Server</string>
+        <token name="RunContext">0</token>
+        <string name="Source"><![CDATA[--!strict
+-- Server entry point. For now (milestone 1) it only sets up the sunny lighting;
+-- the match logic arrives in later milestones.
+
+local Players = game:GetService("Players")
+
+local LightingSetup = require(script.LightingSetup)
+
+-- Players don't walk around: each kid is a model the game builds and places.
+Players.CharacterAutoLoads = false
+
+LightingSetup.apply()
+]]></string>
+      </Properties>
+      <Item class="ModuleScript" referent="22">
+        <Properties>
+          <string name="Name">LightingSetup</string>
+          <string name="Source"><![CDATA[--!strict
+-- Sunny beach lighting: warm sun, soft shadows, a little extra color.
+-- All values come from Config.Lighting.
+
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+
+local LightingSetup = {}
+
+local function effect<T>(className: string, name: string): T
+	local existing = Lighting:FindFirstChild(name)
+	if existing and existing.ClassName == className then
+		return existing :: any
+	end
+	local created = Instance.new(className :: any)
+	created.Name = name
+	created.Parent = Lighting
+	return created :: any
+end
+
+function LightingSetup.apply()
+	local L = Config.Lighting
+	Lighting.ClockTime = L.ClockTime
+	Lighting.GeographicLatitude = L.GeographicLatitude
+	Lighting.Brightness = L.Brightness
+	Lighting.Ambient = L.Ambient
+	Lighting.OutdoorAmbient = L.OutdoorAmbient
+	Lighting.ShadowSoftness = L.ShadowSoftness
+	Lighting.EnvironmentDiffuseScale = L.EnvironmentDiffuseScale
+	Lighting.EnvironmentSpecularScale = L.EnvironmentSpecularScale
+	Lighting.ExposureCompensation = L.ExposureCompensation
+	Lighting.GlobalShadows = true
+
+	local colorCorrection = effect("ColorCorrectionEffect", "SunnyColor") :: ColorCorrectionEffect
+	colorCorrection.Saturation = L.ColorCorrection.Saturation
+	colorCorrection.Contrast = L.ColorCorrection.Contrast
+	colorCorrection.Brightness = L.ColorCorrection.Brightness
+	colorCorrection.TintColor = L.ColorCorrection.TintColor
+
+	local bloom = effect("BloomEffect", "SoftBloom") :: BloomEffect
+	bloom.Intensity = L.Bloom.Intensity
+	bloom.Size = L.Bloom.Size
+	bloom.Threshold = L.Bloom.Threshold
+
+	local atmosphere = effect("Atmosphere", "BeachAir") :: Atmosphere
+	atmosphere.Density = L.Atmosphere.Density
+	atmosphere.Offset = L.Atmosphere.Offset
+	atmosphere.Color = L.Atmosphere.Color
+	atmosphere.Decay = L.Atmosphere.Decay
+	atmosphere.Glare = L.Atmosphere.Glare
+	atmosphere.Haze = L.Atmosphere.Haze
+end
+
+return LightingSetup
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="SoundService" referent="23">
+    <Properties>
+      <string name="Name">SoundService</string>
+      <bool name="RespectFilteringEnabled">true</bool>
+    </Properties>
+  </Item>
+  <Item class="StarterPlayer" referent="24">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="25">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="LocalScript" referent="26">
+        <Properties>
+          <string name="Name">Client</string>
+          <string name="Source"><![CDATA[--!strict
+-- Client entry point. For milestone 1 it opens the test stage where you can
+-- meet the kids; the lobby and matches arrive in later milestones.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+
+ReplicatedStorage:WaitForChild("Shared")
+
+-- Players have no normal avatar, so hide the backpack, health bar and reset button.
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+end)
+task.spawn(function()
+	for _ = 1, 20 do
+		local ok = pcall(function()
+			StarterGui:SetCore("ResetButtonCallback", false)
+		end)
+		if ok then
+			break
+		end
+		task.wait(0.5)
+	end
+end)
+
+local Showcase = require(script.Showcase)
+Showcase.start()
+]]></string>
+        </Properties>
+        <Item class="Folder" referent="27">
+          <Properties>
+            <string name="Name">Animation</string>
+          </Properties>
+          <Item class="ModuleScript" referent="28">
+            <Properties>
+              <string name="Name">Curve</string>
+              <string name="Source"><![CDATA[--!strict
+-- Tiny keyframe curves for hand-made animation.
+-- Curve.keys(0.3, { {0, 0}, {0.25, 1}, {1, 0} }) eases between the keys.
+
+local Curve = {}
+
+local function smooth(t: number): number
+	return t * t * (3 - 2 * t)
+end
+
+function Curve.keys(p: number, keys: { { number } }): number
+	if p <= keys[1][1] then
+		return keys[1][2]
+	end
+	for i = 2, #keys do
+		local a, b = keys[i - 1], keys[i]
+		if p <= b[1] then
+			local t = (p - a[1]) / (b[1] - a[1])
+			return a[2] + (b[2] - a[2]) * smooth(t)
+		end
+	end
+	return keys[#keys][2]
+end
+
+function Curve.lerp(a: number, b: number, t: number): number
+	return a + (b - a) * t
+end
+
+return Curve
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="29">
+            <Properties>
+              <string name="Name">KidAnimator</string>
+              <string name="Source"><![CDATA[--!strict
+-- Brings a kid to life: bobbing on the waves, blinking, aiming, throwing
+-- with squash and stretch, flinching when hit, flailing through the air,
+-- splashing into the water, bobbing there sadly and sinking out of view.
+--
+-- Everything is computed each frame from simple curves and handed to the
+-- kid's rig (Shared/Character/KidRig.luau). One loop drives all kids.
+--
+--   local animator = KidAnimator.new(kid, { home = Vector3.new(0, 1, 0), facing = 1 })
+--   animator:Aim(true)    animator:Fire()    animator:Hit(1)
+--   animator:Knock(Vector3.new(-20, 18, 0))  animator:Win(true)  animator:DropIn()
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local KidRig = require(ReplicatedStorage.Shared.Character.KidRig)
+local CharacterBuilder = require(ReplicatedStorage.Shared.Character.CharacterBuilder)
+local Curve = require(script.Parent.Curve)
+local Splash = require(script.Parent.Parent.Effects.Splash)
+
+type Kid = CharacterBuilder.Kid
+
+type Overlay = {
+	kind: string,
+	t: number,
+	duration: number,
+	direction: number,
+}
+
+type Limb = { out: number, forward: number }
+
+type AnimatorData = {
+	Kid: Kid,
+	Home: Vector3, -- point between the feet when standing
+	Facing: number, -- 1 = target is to the right (+X), -1 = to the left
+	ExtraYaw: number, -- degrees (used to spin the kid around for a look)
+	Turntable: boolean,
+	State: string, -- Idle, Aim, Win, Fly, Water, Sink, Gone, Drop
+	StateTime: number,
+	Clock: number,
+	Phase: number,
+	Overlays: { Overlay },
+	Position: Vector3,
+	Velocity: Vector3,
+	Spin: number,
+	FaceOverride: string?,
+	FaceOverrideUntil: number,
+	NextBlink: number,
+	NextRipple: number,
+	NextBubble: number,
+	OnGone: (() -> ())?,
+	Destroyed: boolean,
+}
+
+local KidAnimator = {}
+KidAnimator.__index = KidAnimator
+
+export type Animator = typeof(setmetatable({} :: AnimatorData, KidAnimator))
+
+export type Options = {
+	home: Vector3,
+	facing: number?,
+}
+
+local active: { [Animator]: boolean } = {}
+local loop: RBXScriptConnection? = nil
+local random = Random.new()
+
+local STATE_FACES = {
+	Idle = "Idle",
+	Aim = "Aiming",
+	Win = "Win",
+	Fly = "Flying",
+	Water = "Wet",
+	Sink = "Wet",
+	Gone = "Wet",
+	Drop = "Fire",
+}
+
+local function ensureLoop()
+	if loop then
+		return
+	end
+	loop = RunService.RenderStepped:Connect(function(dt)
+		for animator in active do
+			local ok, err = pcall(animator.Update, animator, dt)
+			if not ok then
+				warn("[KidAnimator] " .. tostring(err))
+			end
+		end
+	end)
+end
+
+function KidAnimator.new(kid: Kid, options: Options): Animator
+	local self = setmetatable({
+		Kid = kid,
+		Home = options.home,
+		Facing = options.facing or 1,
+		ExtraYaw = 0,
+		Turntable = false,
+		State = "Idle",
+		StateTime = 0,
+		Clock = 0,
+		Phase = random:NextNumber(0, 10),
+		Overlays = {},
+		Position = options.home,
+		Velocity = Vector3.zero,
+		Spin = 0,
+		FaceOverride = nil,
+		FaceOverrideUntil = 0,
+		NextBlink = random:NextNumber(Config.Face.BlinkEvery[1], Config.Face.BlinkEvery[2]),
+		NextRipple = 0,
+		NextBubble = 0,
+		OnGone = nil,
+		Destroyed = false,
+	} :: AnimatorData, KidAnimator)
+	active[self] = true
+	ensureLoop()
+	self:Update(0)
+	return self
+end
+
+function KidAnimator.Destroy(self: Animator)
+	self.Destroyed = true
+	active[self] = nil
+end
+
+------------------------------------------------------------------------
+-- Commands
+
+function KidAnimator._setState(self: Animator, state: string)
+	self.State = state
+	self.StateTime = 0
+	self.FaceOverride = nil
+end
+
+function KidAnimator._overlay(self: Animator, kind: string, duration: number, direction: number?)
+	for i = #self.Overlays, 1, -1 do
+		if self.Overlays[i].kind == kind then
+			table.remove(self.Overlays, i)
+		end
+	end
+	table.insert(self.Overlays, { kind = kind, t = 0, duration = duration, direction = direction or 1 })
+end
+
+-- Is the kid standing on their spot (not flying or swimming)?
+function KidAnimator.IsStanding(self: Animator): boolean
+	return self.State == "Idle" or self.State == "Aim" or self.State == "Win"
+end
+
+-- Show an expression for a while (or until the next action if no duration).
+function KidAnimator.ShowFace(self: Animator, expression: string, duration: number?)
+	self.FaceOverride = expression
+	self.FaceOverrideUntil = if duration then self.Clock + duration else math.huge
+end
+
+function KidAnimator.SetHome(self: Animator, home: Vector3, facing: number?)
+	self.Home = home
+	if facing then
+		self.Facing = facing
+	end
+end
+
+function KidAnimator.Aim(self: Animator, on: boolean)
+	if on and self:IsStanding() then
+		self:_setState("Aim")
+	elseif not on and self.State == "Aim" then
+		self:_setState("Idle")
+	end
+end
+
+function KidAnimator.Fire(self: Animator)
+	if not self:IsStanding() then
+		return
+	end
+	self:_setState("Idle")
+	self:_overlay("Fire", Config.Anim.FireTime)
+	self:ShowFace("Fire", Config.Anim.FireFaceTime)
+end
+
+-- fromSide: 1 if the hit came from the right, -1 from the left.
+function KidAnimator.Hit(self: Animator, fromSide: number)
+	if not self:IsStanding() then
+		return
+	end
+	if self.State == "Aim" then
+		self:_setState("Idle")
+	end
+	self:_overlay("Hit", Config.Anim.HitTime, fromSide)
+	self:ShowFace("Hit", Config.Anim.HitFaceTime)
+end
+
+-- Send the kid flying with a velocity (studs per second). They splash into the water.
+function KidAnimator.Knock(self: Animator, velocity: Vector3)
+	if self.State == "Fly" or self.State == "Water" or self.State == "Sink" or self.State == "Gone" then
+		return
+	end
+	self.Position = self.Home
+	self.Velocity = velocity
+	self.Spin = 0
+	table.clear(self.Overlays)
+	self:_setState("Fly")
+end
+
+function KidAnimator.Win(self: Animator, on: boolean)
+	if on and self:IsStanding() then
+		self:_setState("Win")
+	elseif not on and self.State == "Win" then
+		self:_setState("Idle")
+	end
+end
+
+-- Drop back onto the home spot from above.
+function KidAnimator.DropIn(self: Animator)
+	self.Position = self.Home + Vector3.new(0, Config.Anim.DropInHeight, 0)
+	self.Velocity = Vector3.zero
+	self.Spin = 0
+	table.clear(self.Overlays)
+	self:_setState("Drop")
+end
+
+-- Snap back to standing on the home spot.
+function KidAnimator.Reset(self: Animator)
+	table.clear(self.Overlays)
+	self.Position = self.Home
+	self:_setState("Idle")
+end
+
+-- Launch speed that makes a kid standing at `from` land in the water at `targetX`.
+function KidAnimator.LaunchVelocity(self: Animator, targetX: number, upSpeed: number): Vector3
+	local g = Config.World.Gravity
+	local pivot = self.Kid.Dims.height * 0.5
+	local drop = self.Home.Y - (Config.World.WaterY - pivot)
+	local t = (upSpeed + math.sqrt(upSpeed * upSpeed + 2 * g * drop)) / g
+	return Vector3.new((targetX - self.Home.X) / t, upSpeed, 0)
+end
+
+------------------------------------------------------------------------
+-- Per-frame update
+
+function KidAnimator.Update(self: Animator, dt: number)
+	if self.Destroyed or not self.Kid.Model.Parent then
+		return
+	end
+	local A = Config.Anim
+	local d = self.Kid.Dims
+	local s = d.scale
+	local facing = self.Facing
+	self.Clock += dt
+	self.StateTime += dt
+
+	-- Pose pieces we build up this frame.
+	local base = self.Home
+	local offset = Vector3.zero
+	local roll = 0 -- radians, in the screen plane; positive tips the kid's head to the left
+	local pivot = 0 -- height of the point we roll around (0 = feet)
+	local sx, sy = 1, 1
+	local arms: { [string]: Limb } = { R = { out = 0, forward = 0 }, L = { out = 0, forward = 0 } }
+	local legs: { [string]: Limb } = { R = { out = 0, forward = 0 }, L = { out = 0, forward = 0 } }
+	local headRoll, headNod = 0, 0
+	local cape = math.rad(4)
+
+	-- The arm on the target's side throws.
+	local front = if facing > 0 then "L" else "R"
+	local back = if facing > 0 then "R" else "L"
+
+	local state = self.State
+	local t = self.Clock + self.Phase
+	local standing = state == "Idle" or state == "Aim" or state == "Win"
+
+	if standing then
+		local w = A.IdleBobSpeed
+		offset += Vector3.new(0, (1 - math.cos(t * w)) * 0.5 * A.IdleBobHeight * s, 0)
+		roll += math.rad(A.IdleSway) * math.sin(t * w * 0.5)
+		local breath = math.sin(t * w) * A.BreathSquash
+		sy *= 1 + breath
+		sx *= 1 - breath * 0.5
+		arms.R.out += math.rad(4) * math.sin(t * 1.7)
+		arms.L.out += math.rad(4) * math.sin(t * 1.7 + 1.3)
+		headRoll += math.rad(3) * math.sin(t * 1.1 + 1)
+		cape += math.rad(6) * math.sin(t * 3.1)
+	end
+
+	if state == "Aim" then
+		local k = math.min(self.StateTime / 0.25, 1)
+		roll += facing * math.rad(A.AimLean) * k
+		arms[front].out = math.rad(118) * k
+		arms[back].out = math.rad(40) * k
+		headRoll -= facing * math.rad(6) * k
+	elseif state == "Win" then
+		local air, ground = A.WinHopTime, 0.22
+		local u = self.StateTime % (air + ground)
+		if u < air then
+			local q = u / air
+			offset += Vector3.new(0, 4 * A.WinHopHeight * s * q * (1 - q), 0)
+			local stretch = 0.12 * math.abs(1 - 2 * q)
+			sy *= 1 + stretch
+			sx *= 1 - stretch * 0.6
+			legs.R.out, legs.L.out = math.rad(14), math.rad(14)
+		else
+			local k = math.sin((u - air) / ground * math.pi)
+			sy *= 1 - 0.18 * k
+			sx *= 1 + 0.12 * k
+		end
+		arms.R.out = math.rad(122) + math.rad(18) * math.sin(self.StateTime * 14)
+		arms.L.out = math.rad(122) + math.rad(18) * math.sin(self.StateTime * 14 + math.pi)
+		roll += math.rad(5) * math.sin(self.StateTime * 6)
+	elseif state == "Fly" then
+		self.Velocity -= Vector3.new(0, Config.World.Gravity * dt, 0)
+		self.Position += self.Velocity * dt
+		local spinDirection = if self.Velocity.X < 0 then 1 else -1
+		self.Spin += math.rad(A.SpinSpeed) * dt * spinDirection
+		base = self.Position
+		pivot = d.height * 0.5
+		roll = self.Spin
+		local flail = self.Clock * A.FlailSpeed
+		arms.R.out = math.rad(110) + math.rad(45) * math.sin(flail)
+		arms.L.out = math.rad(110) + math.rad(45) * math.sin(flail + math.pi)
+		legs.R.out = math.rad(20) + math.rad(25) * math.sin(flail * 0.8 + 1)
+		legs.L.out = math.rad(20) + math.rad(25) * math.sin(flail * 0.8 + 1 + math.pi)
+		legs.R.forward = math.rad(30) * math.sin(flail * 0.7)
+		legs.L.forward = -math.rad(30) * math.sin(flail * 0.7)
+		cape = math.rad(35) + math.rad(15) * math.sin(flail)
+		if self.Position.Y + pivot <= Config.World.WaterY and self.Velocity.Y < 0 then
+			Splash.play(self.Position + Vector3.new(0, pivot, 0), math.clamp(s, 0.8, 1.3))
+			self:_setState("Water")
+			self.NextRipple = self.Clock + 0.6
+		end
+	elseif state == "Water" or state == "Sink" then
+		local floatY = Config.World.WaterY - (d.headCenterY - d.head.Y * 0.38)
+		local y = floatY + math.sin(self.StateTime * 3.2) * A.WaterBob * s
+		local waving = math.rad(20) * math.sin(self.StateTime * 10)
+		arms.R.out = math.rad(128) + waving
+		arms.L.out = math.rad(128) - waving
+		roll = math.rad(6) * math.sin(self.StateTime * 2.3)
+		if state == "Sink" then
+			local k = math.min(self.StateTime / A.SinkTime, 1)
+			y = floatY - (k * k) * (d.height + 1.5)
+			arms.R.out, arms.L.out = math.rad(135), math.rad(135)
+			if self.Clock >= self.NextBubble and k < 0.9 then
+				self.NextBubble = self.Clock + 0.1
+				Splash.bubbles(Vector3.new(self.Position.X, 0, self.Position.Z), 2, s)
+			end
+			if k >= 1 then
+				self:_setState("Gone")
+				if self.OnGone then
+					task.spawn(self.OnGone)
+				end
+			end
+		else
+			if self.Clock >= self.NextRipple then
+				self.NextRipple = self.Clock + 0.9
+				Splash.ripple(self.Position, s)
+			end
+			if self.StateTime >= A.WaterFloatTime then
+				self:_setState("Sink")
+			end
+		end
+		base = Vector3.new(self.Position.X, y, self.Position.Z)
+	elseif state == "Gone" then
+		base = Vector3.new(self.Position.X, Config.World.WaterY - 60, self.Position.Z)
+	elseif state == "Drop" then
+		self.Velocity -= Vector3.new(0, Config.World.Gravity * dt, 0)
+		self.Position += self.Velocity * dt
+		base = self.Position
+		arms.R.out, arms.L.out = math.rad(125), math.rad(125)
+		legs.R.out, legs.L.out = math.rad(10), math.rad(10)
+		if self.Position.Y <= self.Home.Y then
+			self.Position = self.Home
+			base = self.Home
+			self:_setState("Idle")
+			self:_overlay("Land", 0.45)
+		end
+	end
+
+	-- One-shot overlays on top of the state.
+	for i = #self.Overlays, 1, -1 do
+		local o = self.Overlays[i]
+		o.t += dt
+		local p = math.min(o.t / o.duration, 1)
+		if o.kind == "Fire" then
+			local squash = Curve.keys(p, { { 0, 0 }, { 0.22, -1 }, { 0.4, 0.85 }, { 0.62, -0.2 }, { 0.8, 0.06 }, { 1, 0 } })
+				* A.FireSquash
+			sy *= 1 + squash
+			sx *= 1 - squash * 0.6
+			roll += facing
+				* math.rad(A.FireLean)
+				* Curve.keys(p, { { 0, 0 }, { 0.22, 1 }, { 0.4, -0.7 }, { 0.7, 0.15 }, { 1, 0 } })
+			arms[front].out =
+				math.rad(Curve.keys(p, { { 0, 118 }, { 0.22, 135 }, { 0.42, 50 }, { 0.75, 32 }, { 1, 0 } }))
+			arms[back].out = math.rad(Curve.keys(p, { { 0, 40 }, { 0.42, 70 }, { 1, 0 } }))
+			offset += Vector3.new(0, 0.35 * s * Curve.keys(p, { { 0, 0 }, { 0.3, 0 }, { 0.45, 1 }, { 0.65, 0 }, { 1, 0 } }), 0)
+		elseif o.kind == "Hit" then
+			local away = -o.direction
+			local k = Curve.keys(p, { { 0, 0 }, { 0.1, 1 }, { 0.35, -0.4 }, { 0.6, 0.1 }, { 1, 0 } })
+			roll += -away
+				* math.rad(A.HitLean)
+				* Curve.keys(p, { { 0, 0 }, { 0.12, 1 }, { 0.4, -0.3 }, { 0.7, 0.1 }, { 1, 0 } })
+			offset += Vector3.new(
+				away * 0.45 * s * Curve.keys(p, { { 0, 0 }, { 0.2, 1 }, { 0.6, 0.6 }, { 1, 0 } })
+					+ math.sin(p * 60) * 0.06 * (1 - p),
+				A.HitHop * s * Curve.keys(p, { { 0, 0 }, { 0.18, 1 }, { 0.38, 0 }, { 1, 0 } }),
+				0
+			)
+			sx *= 1 - 0.15 * k
+			sy *= 1 + 0.12 * k
+			local fling = math.rad(70) * Curve.keys(p, { { 0, 0 }, { 0.15, 1 }, { 0.6, 0.3 }, { 1, 0 } })
+			arms.R.out += fling
+			arms.L.out += fling
+			headNod -= math.rad(15) * k
+		elseif o.kind == "Land" then
+			local k = Curve.keys(p, { { 0, 0 }, { 0.15, 1 }, { 0.45, -0.35 }, { 0.7, 0.1 }, { 1, 0 } })
+			sy *= 1 - A.LandSquash * k
+			sx *= 1 + A.LandSquash * 0.7 * k
+		end
+		if p >= 1 then
+			table.remove(self.Overlays, i)
+		end
+	end
+
+	-- Face: an override (from an action or a button) wins over the state's face.
+	local face = self.Kid.Face
+	if self.FaceOverride and self.Clock > self.FaceOverrideUntil then
+		self.FaceOverride = nil
+	end
+	local wanted = self.FaceOverride or STATE_FACES[state] or "Idle"
+	if face.Expression ~= wanted then
+		face:SetExpression(wanted)
+	end
+	if self.Clock >= self.NextBlink then
+		self.NextBlink = self.Clock + random:NextNumber(Config.Face.BlinkEvery[1], Config.Face.BlinkEvery[2])
+		face:Blink()
+	end
+	face:Update(dt)
+
+	if self.Turntable then
+		self.ExtraYaw = (self.ExtraYaw + 45 * dt) % 360
+	end
+
+	-- Hand everything to the rig. Kids keep their face toward the camera,
+	-- turned a little toward their target.
+	local camera = workspace.CurrentCamera
+	local toCamera = if camera then camera.CFrame.Position - base else Vector3.zAxis
+	local flat = Vector3.new(toCamera.X, 0, toCamera.Z)
+	local cameraYaw = if flat.Magnitude > 1e-3 then math.atan2(-flat.X, -flat.Z) else math.pi
+	local yaw = cameraYaw + facing * math.rad(Config.Kid.FacingAngle) + math.rad(self.ExtraYaw)
+	local rootCF = CFrame.new(base + offset + Vector3.new(0, pivot, 0))
+		* CFrame.Angles(0, 0, roll)
+		* CFrame.new(0, -pivot, 0)
+		* CFrame.Angles(0, yaw, 0)
+	KidRig.apply(self.Kid.Rig, {
+		root = rootCF,
+		squash = Vector2.new(sx, sy),
+		bones = {
+			ArmR = CFrame.Angles(arms.R.forward, 0, arms.R.out),
+			ArmL = CFrame.Angles(arms.L.forward, 0, -arms.L.out),
+			LegR = CFrame.Angles(legs.R.forward, 0, legs.R.out),
+			LegL = CFrame.Angles(legs.L.forward, 0, -legs.L.out),
+			Head = CFrame.Angles(headNod, 0, headRoll),
+			Cape = CFrame.Angles(-cape, 0, 0),
+		},
+	})
+end
+
+return KidAnimator
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="ModuleScript" referent="30">
+          <Properties>
+            <string name="Name">CameraRig</string>
+            <string name="Source"><![CDATA[--!strict
+-- A side-on camera (like the 2D original) that glides to whatever we ask it to frame.
+--   CameraRig.start()
+--   CameraRig.frame(Vector3.new(0, 3, 0), 20, 6)  -- center, half width, half height (studs)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+
+local CameraRig = {}
+
+local target = {
+	center = Vector3.new(0, 3, 0),
+	halfWidth = 20,
+	halfHeight = 6,
+}
+local current: CFrame? = nil
+local started = false
+
+local function desired(camera: Camera): CFrame
+	local viewport = camera.ViewportSize
+	local aspect = if viewport.Y > 0 then viewport.X / viewport.Y else 16 / 9
+	local tanHalf = math.tan(math.rad(Config.Camera.FieldOfView / 2))
+	local distance = math.max(target.halfHeight / tanHalf, target.halfWidth / (tanHalf * aspect))
+	local pitch = math.rad(Config.Camera.Pitch)
+	local eye = target.center + Vector3.new(0, math.sin(pitch), math.cos(pitch)) * distance
+	return CFrame.lookAt(eye, target.center)
+end
+
+function CameraRig.start()
+	if started then
+		return
+	end
+	started = true
+	RunService:BindToRenderStep("SplashCamera", Enum.RenderPriority.Camera.Value + 1, function(dt)
+		local camera = workspace.CurrentCamera
+		if not camera then
+			return
+		end
+		if camera.CameraType ~= Enum.CameraType.Scriptable then
+			camera.CameraType = Enum.CameraType.Scriptable
+		end
+		camera.FieldOfView = Config.Camera.FieldOfView
+		local goal = desired(camera)
+		local alpha = 1 - math.exp(-Config.Camera.Smoothness * dt)
+		current = if current then current:Lerp(goal, alpha) else goal
+		camera.CFrame = current :: CFrame
+	end)
+end
+
+-- Frame a region: everything within halfWidth/halfHeight of center stays on screen.
+function CameraRig.frame(center: Vector3, halfWidth: number, halfHeight: number, instant: boolean?)
+	target.center = center
+	target.halfWidth = halfWidth
+	target.halfHeight = halfHeight
+	if instant then
+		current = nil
+	end
+end
+
+return CameraRig
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="31">
+          <Properties>
+            <string name="Name">Effects</string>
+          </Properties>
+          <Item class="ModuleScript" referent="32">
+            <Properties>
+              <string name="Name">Splash</string>
+              <string name="Source"><![CDATA[--!strict
+-- Cartoon water effects, all made from parts: a big splash (a water column,
+-- flying droplets, a ring of foam and a puff of spray), small ripples, and
+-- "blub blub" bubbles when someone sinks.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Shapes = require(ReplicatedStorage.Shared.Character.Shapes)
+
+local Splash = {}
+
+type Effect = (dt: number) -> boolean -- return false when finished
+
+local effects: { Effect } = {}
+local connection: RBXScriptConnection? = nil
+local random = Random.new()
+
+local function folder(): Instance
+	local existing = workspace:FindFirstChild("Effects")
+	if existing then
+		return existing
+	end
+	local created = Instance.new("Folder")
+	created.Name = "Effects"
+	created.Parent = workspace
+	return created
+end
+
+local function run(effect: Effect)
+	table.insert(effects, effect)
+	if connection then
+		return
+	end
+	connection = RunService.RenderStepped:Connect(function(dt)
+		for i = #effects, 1, -1 do
+			local ok, alive = pcall(effects[i], dt)
+			if not ok or not alive then
+				table.remove(effects, i)
+			end
+		end
+	end)
+end
+
+local function blob(name: string, size: Vector3, color: Color3, transparency: number): Part
+	local part = Shapes.ellipsoid(name, size, color, folder())
+	part.Transparency = transparency
+	part.CastShadow = false
+	return part
+end
+
+-- Flying droplets that stretch along their path.
+local function droplets(position: Vector3, scale: number)
+	local S = Config.Splash
+	local gravity = Config.World.Gravity
+	for _ = 1, S.Droplets do
+		local size = random:NextNumber(S.DropletSize[1], S.DropletSize[2]) * scale
+		local angle = random:NextNumber(0, 2 * math.pi)
+		local outward = random:NextNumber(2, 8) * scale
+		local velocity = Vector3.new(
+			math.cos(angle) * outward,
+			random:NextNumber(S.DropletSpeed[1], S.DropletSpeed[2]) * math.sqrt(scale),
+			math.sin(angle) * outward * 0.4
+		)
+		local pos = position + Vector3.new(math.cos(angle), 0.2, math.sin(angle) * 0.4) * 0.5 * scale
+		local part = blob("Droplet", Vector3.new(size, size * 1.6, size), S.WaterColor, 0.05)
+		local age = 0
+		run(function(dt)
+			age += dt
+			velocity -= Vector3.new(0, gravity * dt, 0)
+			pos += velocity * dt
+			if pos.Y < Config.World.WaterY and velocity.Y < 0 then
+				part:Destroy()
+				return false
+			end
+			local stretch = 1 + math.min(velocity.Magnitude / 30, 0.8)
+			part.Size = Vector3.new(size, size * stretch, size)
+			part.CFrame = Shapes.alongY(pos, velocity)
+			return true
+		end)
+	end
+end
+
+-- A ring of foam blobs spreading out on the water.
+local function ring(position: Vector3, scale: number, blobs: number, fromRadius: number, toRadius: number, duration: number, blobSize: number)
+	local parts = {}
+	for i = 1, blobs do
+		parts[i] = blob("Foam", Vector3.one, Config.Splash.FoamColor, 0)
+	end
+	local age = 0
+	run(function(dt)
+		age += dt
+		local p = math.min(age / duration, 1)
+		local eased = 1 - (1 - p) ^ 3
+		local radius = (fromRadius + (toRadius - fromRadius) * eased) * scale
+		local size = blobSize * scale * (1 - 0.6 * p)
+		for i, part in parts do
+			local a = (i / blobs) * 2 * math.pi
+			part.Size = Vector3.new(size, size * 0.45, size)
+			part.Transparency = p ^ 1.5
+			part.CFrame = CFrame.new(position + Vector3.new(math.cos(a) * radius, 0.05, math.sin(a) * radius))
+		end
+		if p >= 1 then
+			for _, part in parts do
+				part:Destroy()
+			end
+			return false
+		end
+		return true
+	end)
+end
+
+-- The tall cartoon column of water that shoots up and falls back.
+local function column(position: Vector3, scale: number)
+	local S = Config.Splash
+	local part = blob("Column", Vector3.one, S.WaterColor, 0.1)
+	local age = 0
+	run(function(dt)
+		age += dt
+		local p = math.min(age / S.ColumnTime, 1)
+		local height = math.max(S.ColumnHeight * scale * math.sin(math.pi * p), 0.05)
+		local width = (0.9 + 0.9 * p) * scale
+		part.Size = Vector3.new(width, height, width * 0.8)
+		part.CFrame = CFrame.new(position + Vector3.new(0, height / 2 - 0.2, 0))
+		part.Transparency = 0.1 + 0.5 * p
+		if p >= 1 then
+			part:Destroy()
+			return false
+		end
+		return true
+	end)
+end
+
+-- A puff of spray using Roblox particles.
+local function spray(position: Vector3, scale: number)
+	local holder = Shapes.carrier("Spray", Vector3.one, folder())
+	holder.CFrame = CFrame.new(position)
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Rate = 0
+	emitter.Lifetime = NumberRange.new(0.4, 0.8)
+	emitter.Speed = NumberRange.new(6 * scale, 13 * scale)
+	emitter.SpreadAngle = Vector2.new(40, 40)
+	emitter.EmissionDirection = Enum.NormalId.Top
+	emitter.Acceleration = Vector3.new(0, -30, 0)
+	emitter.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.5 * scale),
+		NumberSequenceKeypoint.new(1, 1.3 * scale),
+	})
+	emitter.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	emitter.Color = ColorSequence.new(Config.Splash.FoamColor, Config.Splash.WaterColor)
+	emitter.LightEmission = 0.2
+	emitter.Parent = holder
+	emitter:Emit(24)
+	task.delay(1.5, function()
+		holder:Destroy()
+	end)
+end
+
+-- The big splash when a kid hits the water.
+function Splash.play(position: Vector3, scale: number?)
+	local s = scale or 1
+	local S = Config.Splash
+	local surface = Vector3.new(position.X, Config.World.WaterY, position.Z)
+	column(surface, s)
+	droplets(surface, s)
+	ring(surface, s, S.RingBlobs, S.RingStartRadius, S.RingEndRadius, S.RingTime, 0.75)
+	ring(surface, s * 0.6, math.floor(S.RingBlobs * 0.7), S.RingStartRadius, S.RingEndRadius, S.RingTime * 1.3, 0.6)
+	spray(surface, s)
+end
+
+-- A small ring on the water, for kids bobbing about.
+function Splash.ripple(position: Vector3, scale: number?)
+	local surface = Vector3.new(position.X, Config.World.WaterY, position.Z)
+	ring(surface, scale or 1, 14, 0.8, 2.4, 0.9, 0.32)
+end
+
+-- Bubbles popping on the surface while a kid sinks.
+function Splash.bubbles(position: Vector3, count: number, scale: number?)
+	local s = scale or 1
+	for _ = 1, count do
+		local offset = Vector3.new(random:NextNumber(-0.8, 0.8), 0, random:NextNumber(-0.5, 0.5)) * s
+		local pos = Vector3.new(position.X, Config.World.WaterY, position.Z) + offset
+		local maxSize = random:NextNumber(0.25, 0.5) * s
+		local part = blob("Bubble", Vector3.one * 0.05, Config.Splash.FoamColor, 0.25)
+		local age, life = 0, random:NextNumber(0.25, 0.45)
+		run(function(dt)
+			age += dt
+			local p = math.min(age / life, 1)
+			local size = math.max(maxSize * math.sin(p * math.pi * 0.5), 0.05)
+			part.Size = Vector3.new(size, size * 0.8, size)
+			part.CFrame = CFrame.new(pos + Vector3.new(0, size * 0.2, 0))
+			if p >= 1 then
+				part:Destroy()
+				return false
+			end
+			return true
+		end)
+	end
+end
+
+return Splash
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="ModuleScript" referent="33">
+          <Properties>
+            <string name="Name">Showcase</string>
+            <string name="Source"><![CDATA[--!strict
+-- Milestone 1 test stage: the whole cast stands on a dock so you can look
+-- closely at them, try every expression and move, and dress them up.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Outfits = require(ReplicatedStorage.Shared.Data.Outfits)
+local Characters = require(ReplicatedStorage.Shared.Data.Characters)
+local CharacterBuilder = require(ReplicatedStorage.Shared.Character.CharacterBuilder)
+local KidAnimator = require(script.Parent.Animation.KidAnimator)
+local CameraRig = require(script.Parent.CameraRig)
+local Stage = require(script.Stage)
+local ShowcaseUI = require(script.ShowcaseUI)
+
+type Entry = {
+	id: string,
+	name: string,
+	outfit: Outfits.Outfit,
+	original: Outfits.Outfit,
+	home: Vector3,
+	kid: CharacterBuilder.Kid?,
+	animator: KidAnimator.Animator?,
+	tag: TextLabel?,
+}
+
+local Showcase = {}
+
+local SPACING = 4.4
+local random = Random.new()
+
+local entries: { Entry } = {}
+local selected = 0 -- 0 = everyone
+local closeUp = false
+local spinning = false
+local stage: Folder
+local ui: ShowcaseUI.UI
+
+local function targets(): { Entry }
+	if selected == 0 then
+		return entries
+	end
+	return { entries[selected] }
+end
+
+local function refreshTags()
+	for i, entry in entries do
+		local tag = entry.tag
+		if tag then
+			local isSelected = i == selected
+			tag.Text = if isSelected then "v " .. entry.name .. " v" else entry.name
+			tag.TextColor3 = if isSelected then Color3.fromRGB(255, 214, 58) else Color3.new(1, 1, 1)
+			tag.Visible = not closeUp
+		end
+	end
+end
+
+local function spawnKid(entry: Entry)
+	if entry.animator then
+		entry.animator:Destroy()
+	end
+	if entry.kid then
+		entry.kid.Model:Destroy()
+	end
+	local kid = CharacterBuilder.build(entry.outfit, CFrame.new(entry.home), { name = entry.name, parent = stage :: Instance })
+	local animator = KidAnimator.new(kid, { home = entry.home, facing = 1 })
+	animator.Turntable = spinning and (selected == 0 or entries[selected] == entry)
+	animator.OnGone = function()
+		task.delay(1.0, function()
+			if entry.animator == animator then
+				animator:DropIn()
+			end
+		end)
+	end
+	entry.kid = kid
+	entry.animator = animator
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "NameTag"
+	billboard.Adornee = kid.Root
+	billboard.Size = UDim2.fromOffset(170, 30)
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, kid.Dims.height + 1.7, 0)
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.Parent = kid.Model
+	local tag = Instance.new("TextLabel")
+	tag.Size = UDim2.fromScale(1, 1)
+	tag.BackgroundTransparency = 1
+	tag.Font = Enum.Font.FredokaOne
+	tag.TextSize = 22
+	tag.TextColor3 = Color3.new(1, 1, 1)
+	tag.TextStrokeColor3 = Color3.fromRGB(34, 22, 36)
+	tag.TextStrokeTransparency = 0
+	tag.Parent = billboard
+	entry.tag = tag
+	refreshTags()
+end
+
+------------------------------------------------------------------------
+-- Wardrobe
+
+local function cycle(list: { string }, current: string?, step: number): string
+	local index = table.find(list, current or "") or 0
+	return list[(index - 1 + step) % #list + 1]
+end
+
+local function ids(list: { Outfits.CatalogItem }): { string }
+	local out = {}
+	for _, item in list do
+		table.insert(out, item.id)
+	end
+	return out
+end
+
+local function nameOf(list: { Outfits.CatalogItem }, id: string?): string
+	local item = Outfits.find(list, id or "None")
+	return if item then item.name else (id or "-")
+end
+
+local function colorName(value: Outfits.ColorRef?): string
+	return if type(value) == "string" then value else "-"
+end
+
+local function onOff(value: any): string
+	return if value then "On" else "Off"
+end
+
+local function wardrobeValues(outfit: Outfits.Outfit): { [string]: string }
+	return {
+		Skin = colorName(outfit.skin),
+		Hair = nameOf(Outfits.HairStyles, outfit.hair.style),
+		["Hair color"] = colorName(outfit.hair.color),
+		Hat = nameOf(Outfits.Hats, if outfit.hat then outfit.hat.style else "None"),
+		Top = nameOf(Outfits.Tops, outfit.top.style),
+		["Top color"] = if outfit.top.style == "None" then "-" else colorName(outfit.top.color),
+		Bottom = nameOf(Outfits.Bottoms, outfit.bottom.style),
+		["Bottom color"] = colorName(outfit.bottom.color),
+		Shoes = nameOf(Outfits.Shoes, outfit.shoes.style),
+		["Shoe color"] = if outfit.shoes.style == "Bare" then "-" else colorName(outfit.shoes.color),
+		Cape = onOff(outfit.cape),
+		Goggles = onOff(outfit.goggles),
+		["Life ring"] = onOff(outfit.lifeRing),
+		Mask = onOff(outfit.mask),
+	}
+end
+
+local function catalogPiece(list: { Outfits.CatalogItem }, id: string, color: Outfits.ColorRef?): Outfits.Piece
+	local item = Outfits.find(list, id)
+	return {
+		style = id,
+		color = (item and item.color) or color,
+		accent = item and item.accent,
+	}
+end
+
+local function randomFrom(list: { string }): string
+	return list[random:NextInteger(1, #list)]
+end
+
+local function randomOutfit(): Outfits.Outfit
+	local hat = randomFrom(ids(Outfits.Hats))
+	local top = randomFrom(ids(Outfits.Tops))
+	return {
+		skin = randomFrom(Outfits.SkinTones),
+		hair = { style = randomFrom(ids(Outfits.HairStyles)), color = randomFrom(Outfits.HairColors) },
+		hat = if hat == "None" then nil else catalogPiece(Outfits.Hats, hat),
+		top = { style = top, color = randomFrom(Outfits.ClothColors), accent = randomFrom(Outfits.ClothColors) },
+		bottom = { style = randomFrom(ids(Outfits.Bottoms)), color = randomFrom(Outfits.ClothColors) },
+		shoes = { style = randomFrom(ids(Outfits.Shoes)), color = randomFrom(Outfits.ClothColors) },
+		cape = if random:NextNumber() < 0.25 then { style = "Cape", color = randomFrom(Outfits.ClothColors) } else nil,
+		goggles = if random:NextNumber() < 0.25 then { style = "Goggles" } else nil,
+		lifeRing = if random:NextNumber() < 0.2 then { style = "LifeRing" } else nil,
+		mask = if random:NextNumber() < 0.15 then randomFrom(Outfits.ClothColors) else nil,
+	}
+end
+
+local function changeOutfit(entry: Entry, field: string, step: number)
+	local o = entry.outfit
+	if field == "Random" then
+		local fresh = randomOutfit()
+		fresh.proportions = o.proportions
+		fresh.emblem = o.emblem
+		entry.outfit = fresh
+	elseif field == "Reset" then
+		entry.outfit = Outfits.copy(entry.original)
+	elseif field == "Skin" then
+		o.skin = cycle(Outfits.SkinTones, colorName(o.skin), step)
+	elseif field == "Hair" then
+		o.hair.style = cycle(ids(Outfits.HairStyles), o.hair.style, step)
+	elseif field == "Hair color" then
+		o.hair.color = cycle(Outfits.HairColors, colorName(o.hair.color), step)
+	elseif field == "Hat" then
+		local id = cycle(ids(Outfits.Hats), if o.hat then o.hat.style else "None", step)
+		o.hat = if id == "None" then nil else catalogPiece(Outfits.Hats, id)
+	elseif field == "Top" then
+		o.top.style = cycle(ids(Outfits.Tops), o.top.style, step)
+		o.top.color = o.top.color or "White"
+	elseif field == "Top color" then
+		o.top.color = cycle(Outfits.ClothColors, colorName(o.top.color), step)
+	elseif field == "Bottom" then
+		o.bottom.style = cycle(ids(Outfits.Bottoms), o.bottom.style, step)
+	elseif field == "Bottom color" then
+		o.bottom.color = cycle(Outfits.ClothColors, colorName(o.bottom.color), step)
+	elseif field == "Shoes" then
+		o.shoes.style = cycle(ids(Outfits.Shoes), o.shoes.style, step)
+		o.shoes.color = o.shoes.color or "Red"
+	elseif field == "Shoe color" then
+		o.shoes.color = cycle(Outfits.ClothColors, colorName(o.shoes.color), step)
+	elseif field == "Cape" then
+		o.cape = if o.cape then nil else { style = "Cape", color = "Red", accent = "Sunny" }
+	elseif field == "Goggles" then
+		o.goggles = if o.goggles then nil else { style = "Goggles", color = "Glass", accent = "Aqua" }
+	elseif field == "Life ring" then
+		o.lifeRing = if o.lifeRing then nil else { style = "LifeRing", color = "Red", accent = "White" }
+	elseif field == "Mask" then
+		o.mask = if o.mask then nil else "Red"
+	end
+	spawnKid(entry)
+	ui.setWardrobe(wardrobeValues(entry.outfit))
+end
+
+------------------------------------------------------------------------
+-- Moves
+
+local function doMove(move: string)
+	local list = targets()
+	if move == "Aim" then
+		local anyIdle = false
+		for _, entry in list do
+			if entry.animator and entry.animator.State ~= "Aim" then
+				anyIdle = true
+			end
+		end
+		for _, entry in list do
+			if entry.animator then
+				entry.animator:Aim(anyIdle)
+			end
+		end
+	elseif move == "Throw" then
+		for _, entry in list do
+			local animator = entry.animator
+			if animator and animator:IsStanding() then
+				if animator.State == "Aim" then
+					animator:Fire()
+				else
+					animator:Aim(true)
+					task.delay(0.4, function()
+						animator:Fire()
+					end)
+				end
+			end
+		end
+	elseif move == "Hit" then
+		for _, entry in list do
+			if entry.animator then
+				entry.animator:Hit(1)
+			end
+		end
+	elseif move == "Knock" then
+		for i, entry in list do
+			local animator = entry.animator
+			if animator and animator:IsStanding() then
+				task.delay((i - 1) * 0.15, function()
+					animator:Hit(1)
+					task.wait(0.12)
+					local landX = Stage.DockLeft - 3 - random:NextNumber(0, 4)
+					animator:Knock(animator:LaunchVelocity(landX, random:NextNumber(17, 22)))
+				end)
+			end
+		end
+	elseif move == "Win" then
+		local anyIdle = false
+		for _, entry in list do
+			if entry.animator and entry.animator.State ~= "Win" then
+				anyIdle = true
+			end
+		end
+		for _, entry in list do
+			if entry.animator then
+				entry.animator:Win(anyIdle)
+			end
+		end
+	elseif move == "Reset" then
+		for _, entry in list do
+			if entry.animator then
+				entry.animator:Reset()
+			end
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- Camera
+
+local function updateCamera()
+	if closeUp and selected > 0 then
+		local entry = entries[selected]
+		local kid, animator = entry.kid, entry.animator
+		if kid and animator then
+			local position = if animator.State == "Gone" then entry.home else kid.Root.CFrame.Position
+			local height = kid.Dims.height
+			CameraRig.frame(Vector3.new(position.X, position.Y + height * 0.55, 0), height * 0.55, height * 0.68)
+			return
+		end
+	end
+	local left, right = Stage.DockLeft - 8, Stage.DockRight + 5
+	CameraRig.frame(Vector3.new((left + right) / 2, Stage.DockY + 2.8, 0), (right - left) / 2, 6)
+end
+
+------------------------------------------------------------------------
+
+function Showcase.start()
+	stage = Stage.build()
+	CameraRig.start()
+
+	local lineup = {
+		Characters.Extras[1],
+		Characters.Extras[2],
+		Characters.Heroes[2],
+		Characters.Heroes[1],
+		Characters.Extras[3],
+		Characters.Extras[4],
+		Characters.Extras[5],
+	}
+	local names = {}
+	for i, character in lineup do
+		local x = (i - (#lineup + 1) / 2) * SPACING
+		local entry: Entry = {
+			id = character.id,
+			name = character.name,
+			outfit = Outfits.copy(character.outfit),
+			original = Outfits.copy(character.outfit),
+			home = Vector3.new(x, Stage.DockY, 0),
+			kid = nil,
+			animator = nil,
+			tag = nil,
+		}
+		table.insert(entries, entry)
+		table.insert(names, character.name)
+	end
+
+	ui = ShowcaseUI.build(names, {
+		select = function(index)
+			selected = index
+			ui.setSelected(index)
+			ui.setWardrobe(if index > 0 then wardrobeValues(entries[index].outfit) else nil)
+			for i, entry in entries do
+				if entry.animator then
+					entry.animator.Turntable = spinning and (index == 0 or i == index)
+					if not entry.animator.Turntable then
+						entry.animator.ExtraYaw = 0
+					end
+				end
+			end
+			refreshTags()
+		end,
+		face = function(expression)
+			for _, entry in targets() do
+				if entry.animator then
+					entry.animator:ShowFace(expression)
+				end
+			end
+		end,
+		move = doMove,
+		toggle = function(name, on)
+			if name == "Close-up" then
+				closeUp = on
+				refreshTags()
+			elseif name == "Spin" then
+				spinning = on
+				for i, entry in entries do
+					if entry.animator then
+						entry.animator.Turntable = on and (selected == 0 or i == selected)
+						if not entry.animator.Turntable then
+							entry.animator.ExtraYaw = 0
+						end
+					end
+				end
+			end
+		end,
+		wardrobe = function(field, step)
+			if selected > 0 then
+				changeOutfit(entries[selected], field, step)
+			end
+		end,
+	})
+
+	for _, entry in entries do
+		spawnKid(entry)
+	end
+	updateCamera()
+	RunService.Heartbeat:Connect(updateCamera)
+end
+
+return Showcase
+]]></string>
+          </Properties>
+          <Item class="ModuleScript" referent="34">
+            <Properties>
+              <string name="Name">ShowcaseUI</string>
+              <string name="Source"><![CDATA[--!strict
+-- On-screen buttons for the test stage: pick a kid, try every face and move,
+-- and dress kids up from the wardrobe. Big chunky buttons that work by touch.
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Face = require(ReplicatedStorage.Shared.Character.Face)
+
+local ShowcaseUI = {}
+
+export type Callbacks = {
+	select: (index: number) -> (), -- 0 = everyone
+	face: (expression: string) -> (),
+	move: (move: string) -> (),
+	toggle: (name: string, on: boolean) -> (),
+	wardrobe: (field: string, step: number) -> (),
+}
+
+export type UI = {
+	gui: ScreenGui,
+	setSelected: (index: number) -> (),
+	setWardrobe: (values: { [string]: string }?) -> (),
+}
+
+ShowcaseUI.WardrobeFields = {
+	"Skin",
+	"Hair",
+	"Hair color",
+	"Hat",
+	"Top",
+	"Top color",
+	"Bottom",
+	"Bottom color",
+	"Shoes",
+	"Shoe color",
+	"Cape",
+	"Goggles",
+	"Life ring",
+	"Mask",
+}
+
+ShowcaseUI.Moves = {
+	{ id = "Aim", label = "Aim" },
+	{ id = "Throw", label = "Throw!" },
+	{ id = "Hit", label = "Get hit" },
+	{ id = "Knock", label = "Splash!" },
+	{ id = "Win", label = "Win dance" },
+	{ id = "Reset", label = "Reset" },
+}
+
+local FONT = Enum.Font.FredokaOne
+local INK = Color3.fromRGB(34, 22, 36)
+local WHITE = Color3.new(1, 1, 1)
+local COLORS = {
+	tab = Color3.fromRGB(255, 255, 255),
+	tabSelected = Color3.fromRGB(255, 214, 58),
+	face = Color3.fromRGB(118, 196, 255),
+	move = Color3.fromRGB(255, 120, 106),
+	toggleOff = Color3.fromRGB(200, 214, 230),
+	toggleOn = Color3.fromRGB(132, 232, 170),
+	panel = Color3.fromRGB(255, 250, 238),
+	arrow = Color3.fromRGB(255, 186, 36),
+}
+local REFERENCE = Vector2.new(1280, 720) -- layout is designed at this size and scaled
+
+local function corner(parent: Instance, radius: number)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = parent
+end
+
+local function stroke(parent: Instance, thickness: number)
+	local s = Instance.new("UIStroke")
+	s.Thickness = thickness
+	s.Color = INK
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = parent
+end
+
+local function label(parent: Instance, text: string, size: UDim2, textSize: number, color: Color3?): TextLabel
+	local l = Instance.new("TextLabel")
+	l.Size = size
+	l.BackgroundTransparency = 1
+	l.Font = FONT
+	l.Text = text
+	l.TextSize = textSize
+	l.TextColor3 = color or WHITE
+	l.TextStrokeColor3 = INK
+	l.TextStrokeTransparency = if color then 1 else 0
+	l.Parent = parent
+	return l
+end
+
+local function button(parent: Instance, text: string, size: Vector2, color: Color3, onClick: () -> ()): TextButton
+	local b = Instance.new("TextButton")
+	b.Name = text
+	b.Size = UDim2.fromOffset(size.X, size.Y)
+	b.BackgroundColor3 = color
+	b.AutoButtonColor = true
+	b.Font = FONT
+	b.Text = text
+	b.TextSize = math.min(24, size.Y * 0.48)
+	b.TextColor3 = WHITE
+	b.TextStrokeColor3 = INK
+	b.TextStrokeTransparency = 0
+	b.Parent = parent
+	corner(b, math.floor(size.Y * 0.3))
+	stroke(b, 3)
+	local pop = Instance.new("UIScale")
+	pop.Parent = b
+	b.Activated:Connect(function()
+		pop.Scale = 0.88
+		TweenService:Create(pop, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		onClick()
+	end)
+	return b
+end
+
+local function row(parent: Instance, name: string, position: UDim2, anchor: Vector2, padding: number): Frame
+	local f = Instance.new("Frame")
+	f.Name = name
+	f.AutomaticSize = Enum.AutomaticSize.XY
+	f.Size = UDim2.fromOffset(0, 0)
+	f.Position = position
+	f.AnchorPoint = anchor
+	f.BackgroundTransparency = 1
+	f.Parent = parent
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.Padding = UDim.new(0, padding)
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = f
+	return f
+end
+
+function ShowcaseUI.build(names: { string }, callbacks: Callbacks): UI
+	local player = Players.LocalPlayer
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "ShowcaseUI"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+	-- Everything is laid out for 1280x720 and scaled to fit the screen.
+	local root = Instance.new("Frame")
+	root.Name = "Root"
+	root.BackgroundTransparency = 1
+	root.Parent = gui
+	local scale = Instance.new("UIScale")
+	scale.Parent = root
+	local function fit()
+		local camera = workspace.CurrentCamera
+		local viewport = if camera then camera.ViewportSize else REFERENCE
+		local s = math.clamp(math.min(viewport.X / REFERENCE.X, viewport.Y / REFERENCE.Y), 0.62, 1.4)
+		scale.Scale = s
+		root.Size = UDim2.fromOffset(viewport.X / s, viewport.Y / s)
+	end
+	fit()
+	if workspace.CurrentCamera then
+		workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
+	end
+
+	-- Title
+	local title = label(root, Config.GameName, UDim2.fromOffset(300, 40), 34)
+	title.Position = UDim2.fromOffset(18, 12)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	local subtitle = label(root, "Milestone 1 - meet the kids", UDim2.fromOffset(300, 22), 18)
+	subtitle.Position = UDim2.fromOffset(20, 48)
+	subtitle.TextXAlignment = Enum.TextXAlignment.Left
+
+	-- Kid tabs
+	local tabs = row(root, "Tabs", UDim2.fromOffset(18, 80), Vector2.new(0, 0), 8)
+	local tabButtons: { TextButton } = {}
+	local allNames = { "Everyone" }
+	for _, n in names do
+		table.insert(allNames, n)
+	end
+	for i, n in allNames do
+		local b = button(tabs, n, Vector2.new(30 + #n * 12, 42), COLORS.tab, function()
+			callbacks.select(i - 1)
+		end)
+		b.LayoutOrder = i
+		b.TextColor3 = INK
+		b.TextStrokeTransparency = 1
+		tabButtons[i] = b
+	end
+
+	-- Faces and moves along the bottom
+	local faces = row(root, "Faces", UDim2.new(0.5, 0, 1, -76), Vector2.new(0.5, 1), 8)
+	label(faces, "Faces", UDim2.fromOffset(78, 46), 22).LayoutOrder = 0
+	for i, expression in Face.ExpressionOrder do
+		button(faces, expression, Vector2.new(112, 46), COLORS.face, function()
+			callbacks.face(expression)
+		end).LayoutOrder = i
+	end
+	local moves = row(root, "Moves", UDim2.new(0.5, 0, 1, -16), Vector2.new(0.5, 1), 8)
+	label(moves, "Moves", UDim2.fromOffset(78, 50), 22).LayoutOrder = 0
+	for i, move in ShowcaseUI.Moves do
+		button(moves, move.label, Vector2.new(128, 50), COLORS.move, function()
+			callbacks.move(move.id)
+		end).LayoutOrder = i
+	end
+
+	-- Toggles on the right
+	local toggles = row(root, "Toggles", UDim2.new(1, -18, 0, 14), Vector2.new(1, 0), 8)
+	local wardrobePanel: ScrollingFrame
+	for i, name in { "Close-up", "Spin", "Wardrobe" } do
+		local on = false
+		local b: TextButton
+		b = button(toggles, name, Vector2.new(124, 44), COLORS.toggleOff, function()
+			on = not on
+			b.BackgroundColor3 = if on then COLORS.toggleOn else COLORS.toggleOff
+			if name == "Wardrobe" then
+				wardrobePanel.Visible = on
+			end
+			callbacks.toggle(name, on)
+		end)
+		b.LayoutOrder = i
+		b.TextColor3 = INK
+		b.TextStrokeTransparency = 1
+	end
+
+	-- Wardrobe panel
+	wardrobePanel = Instance.new("ScrollingFrame")
+	wardrobePanel.Name = "Wardrobe"
+	wardrobePanel.Visible = false
+	wardrobePanel.AnchorPoint = Vector2.new(1, 0)
+	wardrobePanel.Position = UDim2.new(1, -18, 0, 70)
+	wardrobePanel.Size = UDim2.new(0, 330, 1, -224)
+	wardrobePanel.BackgroundColor3 = COLORS.panel
+	wardrobePanel.ScrollBarThickness = 8
+	wardrobePanel.ScrollBarImageColor3 = INK
+	wardrobePanel.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	wardrobePanel.CanvasSize = UDim2.new()
+	wardrobePanel.Parent = root
+	corner(wardrobePanel, 16)
+	stroke(wardrobePanel, 3)
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 10)
+	padding.PaddingBottom = UDim.new(0, 10)
+	padding.PaddingLeft = UDim.new(0, 10)
+	padding.PaddingRight = UDim.new(0, 14)
+	padding.Parent = wardrobePanel
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 6)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = wardrobePanel
+
+	local hint = label(wardrobePanel, "Pick one kid to dress up!", UDim2.new(1, 0, 0, 40), 20, INK)
+	hint.LayoutOrder = 0
+	local valueLabels: { [string]: TextLabel } = {}
+	local rowsFrames: { Frame } = {}
+	for i, field in ShowcaseUI.WardrobeFields do
+		local r = Instance.new("Frame")
+		r.Name = field
+		r.Size = UDim2.new(1, 0, 0, 40)
+		r.BackgroundTransparency = 1
+		r.LayoutOrder = i
+		r.Parent = wardrobePanel
+		local name = label(r, field, UDim2.fromOffset(104, 40), 17, INK)
+		name.TextXAlignment = Enum.TextXAlignment.Left
+		local left = button(r, "<", Vector2.new(36, 36), COLORS.face, function()
+			callbacks.wardrobe(field, -1)
+		end)
+		left.Position = UDim2.fromOffset(104, 2)
+		local value = label(r, "-", UDim2.fromOffset(122, 40), 16, INK)
+		value.Position = UDim2.fromOffset(142, 0)
+		value.TextScaled = false
+		value.TextWrapped = true
+		valueLabels[field] = value
+		local right = button(r, ">", Vector2.new(36, 36), COLORS.face, function()
+			callbacks.wardrobe(field, 1)
+		end)
+		right.Position = UDim2.fromOffset(266, 2)
+		table.insert(rowsFrames, r)
+	end
+	local extras = row(wardrobePanel, "Extras", UDim2.new(), Vector2.new(), 8)
+	extras.LayoutOrder = #ShowcaseUI.WardrobeFields + 1
+	button(extras, "Random", Vector2.new(140, 42), COLORS.move, function()
+		callbacks.wardrobe("Random", 1)
+	end)
+	button(extras, "Undo all", Vector2.new(140, 42), COLORS.toggleOff, function()
+		callbacks.wardrobe("Reset", 1)
+	end).TextColor3 = INK
+
+	gui.Parent = player:WaitForChild("PlayerGui")
+
+	local ui: UI = {
+		gui = gui,
+		setSelected = function(index: number)
+			for i, b in tabButtons do
+				b.BackgroundColor3 = if i - 1 == index then COLORS.tabSelected else COLORS.tab
+			end
+		end,
+		setWardrobe = function(values: { [string]: string }?)
+			hint.Visible = values == nil
+			extras.Visible = values ~= nil
+			for _, r in rowsFrames do
+				r.Visible = values ~= nil
+			end
+			if values then
+				for field, l in valueLabels do
+					l.Text = values[field] or "-"
+				end
+			end
+		end,
+	}
+	ui.setSelected(0)
+	ui.setWardrobe(nil)
+	return ui
+end
+
+return ShowcaseUI
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="35">
+            <Properties>
+              <string name="Name">Stage</string>
+              <string name="Source"><![CDATA[--!strict
+-- The milestone 1 test stage: a wooden dock over turquoise water.
+-- (The real beach, rafts and sky arrive in milestone 2.)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Shapes = require(ReplicatedStorage.Shared.Character.Shapes)
+
+local Stage = {}
+
+Stage.DockY = 1.4 -- height of the dock's deck (kids stand here)
+Stage.DockLeft = -16.5
+Stage.DockRight = 16.5
+
+local WOOD = {
+	Color3.fromRGB(205, 150, 94),
+	Color3.fromRGB(188, 134, 82),
+	Color3.fromRGB(214, 160, 104),
+}
+local DARK_WOOD = Color3.fromRGB(140, 92, 56)
+local ROPE = Color3.fromRGB(236, 210, 150)
+
+local function cylinder(name: string, length: number, diameter: number, color: Color3, cf: CFrame, parent: Instance): Part
+	local part = Shapes.block(name, Vector3.new(length, diameter, diameter), color, parent)
+	part.Shape = Enum.PartType.Cylinder
+	part.CFrame = cf
+	return part
+end
+
+function Stage.build(): Folder
+	local folder = Instance.new("Folder")
+	folder.Name = "TestStage"
+
+	local water = Shapes.block("Water", Vector3.new(1200, 2, 1200), Color3.fromRGB(52, 196, 214), folder)
+	water.CFrame = CFrame.new(0, Config.World.WaterY - 1, 0)
+	water.CastShadow = false
+
+	local length = Stage.DockRight - Stage.DockLeft
+	local middle = (Stage.DockLeft + Stage.DockRight) / 2
+	for i, z in { -2.1, 0, 2.1 } do
+		local board = Shapes.block("Board", Vector3.new(length, 0.5, 1.95), WOOD[i], folder)
+		board.CFrame = CFrame.new(middle, Stage.DockY - 0.25, z)
+	end
+	local beam = Shapes.block("Beam", Vector3.new(length + 0.4, 0.7, 0.5), DARK_WOOD, folder)
+	beam.CFrame = CFrame.new(middle, Stage.DockY - 0.85, 3.05)
+
+	-- Posts with rounded caps and a rope wrap.
+	local posts = 7
+	for i = 0, posts - 1 do
+		local x = Stage.DockLeft + 0.3 + (length - 0.6) * i / (posts - 1)
+		for _, z in { 3.3, -3.3 } do
+			local top = Stage.DockY + 0.6
+			local bottom = Config.World.WaterY - 4
+			cylinder("Post", top - bottom, 0.9, DARK_WOOD, CFrame.new(x, (top + bottom) / 2, z) * CFrame.Angles(0, 0, math.rad(90)), folder)
+			local cap = Shapes.ellipsoid("PostCap", Vector3.new(0.9, 0.45, 0.9), DARK_WOOD, folder)
+			cap.CFrame = CFrame.new(x, top, z)
+			cylinder("Rope", 0.3, 1.0, ROPE, CFrame.new(x, top - 0.5, z) * CFrame.Angles(0, 0, math.rad(90)), folder)
+		end
+	end
+
+	-- A little sign standing in the water past the end of the dock.
+	local signX = Stage.DockRight + 2.4
+	local sign = Shapes.block("Sign", Vector3.new(4.2, 1.4, 0.25), Color3.fromRGB(250, 236, 200), folder)
+	sign.CFrame = CFrame.new(signX, Stage.DockY + 1.9, 0) * CFrame.Angles(0, math.rad(-12), 0)
+	for _, dx in { -1.5, 1.5 } do
+		local bottom = Config.World.WaterY - 3
+		local top = Stage.DockY + 1.9
+		cylinder(
+			"SignPost",
+			top - bottom,
+			0.3,
+			DARK_WOOD,
+			CFrame.new(signX + dx, (top + bottom) / 2, -0.2) * CFrame.Angles(0, 0, math.rad(90)),
+			folder
+		)
+	end
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Back -- the side facing the camera (+Z)
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 60
+	gui.LightInfluence = 0.5
+	gui.Parent = sign
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.fromScale(1, 1)
+	text.BackgroundTransparency = 1
+	text.Font = Enum.Font.FredokaOne
+	text.Text = Config.GameName
+	text.TextScaled = true
+	text.TextColor3 = Color3.fromRGB(255, 120, 96)
+	text.Parent = gui
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0.06, 0)
+	padding.PaddingRight = UDim.new(0.06, 0)
+	padding.PaddingTop = UDim.new(0.12, 0)
+	padding.PaddingBottom = UDim.new(0.12, 0)
+	padding.Parent = text
+
+	folder.Parent = workspace
+	return folder
+end
+
+return Stage
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="36">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="FilteringEnabled">true</bool>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+  </Item>
+</roblox>

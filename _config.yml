@@ -20,3 +20,7 @@ github:
 
 author: "Adam Simpson"
 url: "https://will51mps0n.github.io/will51mps0n"
+
+# The Roblox game project is not part of the website.
+exclude:
+  - splash-squad

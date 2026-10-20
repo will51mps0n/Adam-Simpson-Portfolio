@@ -1,0 +1,248 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>preview</title>
+<style>body{margin:0;background:#222} canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js"}}</script>
+</head>
+<body>
+<canvas id="sheet"></canvas>
+<script type="module">
+import * as THREE from 'three';
+
+const scenes = await (await fetch('./scenes.json')).json();
+const params = new URLSearchParams(location.search);
+const spec = JSON.parse(params.get('spec'));
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+function arr(v) { return Array.isArray(v) ? v : []; }
+function srgb(c) { return new THREE.Color().setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace); }
+function css(c, a = 1) { return `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${a})`; }
+
+function cframeMatrix(cf) {
+  const [x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22] = cf;
+  const m = new THREE.Matrix4();
+  m.set(r00,r01,r02,x, r10,r11,r12,y, r20,r21,r22,z, 0,0,0,1);
+  return m;
+}
+
+// ---------- GUI drawing ----------
+function drawGui(ctx, nodes, w, h) {
+  const sorted = [...arr(nodes)].sort((a,b)=>a.z-b.z);
+  for (const n of sorted) drawNode(ctx, n, w, h);
+}
+function drawNode(ctx, n, pw, ph) {
+  if (!n.visible) return;
+  const w = pw*n.size[0] + n.size[1], h = ph*n.size[2] + n.size[3];
+  const px = pw*n.position[0] + n.position[1], py = ph*n.position[2] + n.position[3];
+  const left = px - w*n.anchor[0], top = py - h*n.anchor[1];
+  ctx.save();
+  ctx.translate(left + w/2, top + h/2);
+  ctx.rotate(n.rotation*Math.PI/180);
+  ctx.translate(-w/2, -h/2);
+  if (n.transparency < 1 && n.class !== 'TextLabel' || (n.class === 'TextLabel' && n.transparency < 1)) {
+    let r = 0;
+    if (n.corner) r = Math.min(Math.min(w,h)*n.corner[0] + n.corner[1], Math.min(w,h)/2);
+    ctx.fillStyle = css(n.color, 1 - n.transparency);
+    ctx.beginPath(); ctx.roundRect(0, 0, w, h, r); ctx.fill();
+  }
+  if (n.text) {
+    ctx.fillStyle = css(n.textColor);
+    ctx.font = `bold ${Math.round(h*0.7)}px "Fredoka One", "Arial Rounded MT Bold", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(n.text, w/2, h/2 + h*0.04);
+  }
+  if (n.clips) { ctx.beginPath(); ctx.rect(0,0,w,h); ctx.clip(); }
+  const kids = [...arr(n.children)].sort((a,b)=>a.z-b.z);
+  for (const c of kids) drawNode(ctx, c, w, h);
+  ctx.restore();
+}
+
+// ---------- scene building ----------
+const sphereGeo = new THREE.SphereGeometry(0.5, 40, 28);
+const boxGeo = new THREE.BoxGeometry(1,1,1);
+const cylGeo = new THREE.CylinderGeometry(0.5,0.5,1,32); cylGeo.rotateZ(Math.PI/2);
+
+function buildScene(sceneData, opts) {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x9fd8ff);
+  const hemi = new THREE.HemisphereLight(0xdcefff, 0xb59a7a, 1.25); scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);
+  sun.position.set(-12, 30, 18); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048,2048); sun.shadow.radius = 4;
+  const sc = sun.shadow.camera; sc.left=-40; sc.right=40; sc.top=40; sc.bottom=-40; sc.near=1; sc.far=100;
+  scene.add(sun); scene.add(sun.target);
+  const kidGroups = [];
+  const bbox = new THREE.Box3();
+  const headBox = new THREE.Box3();
+  arr(sceneData.models).forEach((model, mi) => {
+    const group = new THREE.Group(); group.userData.id = mi + 1;
+    const meshes = [];
+    arr(model.parts).forEach((p) => {
+      if (p.transparency >= 1) return;
+      let geo = boxGeo;
+      if (p.mesh && p.mesh.type === 'Sphere') geo = sphereGeo;
+      else if (p.shape === 'Ball') geo = sphereGeo;
+      else if (p.shape === 'Cylinder') geo = cylGeo;
+      const mat = new THREE.MeshStandardMaterial({ color: srgb(p.color), roughness: 0.6, metalness: 0, transparent: p.transparency > 0, opacity: 1 - p.transparency });
+      const mesh = new THREE.Mesh(geo, mat);
+      const scale = p.mesh ? p.mesh.scale : [1,1,1];
+      const m = cframeMatrix(p.cf).multiply(new THREE.Matrix4().makeScale(p.size[0]*scale[0], p.size[1]*scale[1], p.size[2]*scale[2]));
+      mesh.matrixAutoUpdate = false; mesh.matrix.copy(m);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      group.add(mesh); meshes.push(mesh);
+      const pos = new THREE.Vector3(p.cf[0], p.cf[1], p.cf[2]);
+      const r = Math.max(...p.size) * 0.5;
+      bbox.expandByPoint(pos.clone().addScalar(r)); bbox.expandByPoint(pos.clone().addScalar(-r));
+      if (p.name === 'Head') { headBox.expandByPoint(pos.clone().addScalar(r)); headBox.expandByPoint(pos.clone().addScalar(-r)); }
+    });
+    arr(model.guis).forEach((g) => {
+      const p = model.parts[g.partIndex - 1];
+      const res = 4;
+      const cw = g.canvas[0], ch = g.canvas[1];
+      const canvas = document.createElement('canvas'); canvas.width = cw*res; canvas.height = ch*res;
+      const ctx = canvas.getContext('2d'); ctx.scale(res, res);
+      drawGui(ctx, g.children, cw, ch);
+      const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, color: 0xeeeeee });
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(1,1), mat);
+      // Front face is local -Z; viewed from the front, GUI x runs along local -X.
+      const m = cframeMatrix(p.cf)
+        .multiply(new THREE.Matrix4().makeTranslation(0, 0, -p.size[2]/2 - 0.005))
+        .multiply(new THREE.Matrix4().makeRotationY(Math.PI))
+        .multiply(new THREE.Matrix4().makeScale(p.size[0], p.size[1], 1));
+      plane.matrixAutoUpdate = false; plane.matrix.copy(m); plane.userData.gui = true;
+      group.add(plane);
+    });
+    scene.add(group); kidGroups.push(group);
+  });
+  if (opts.environment) {
+    const water = new THREE.Mesh(new THREE.BoxGeometry(400, 2, 400), new THREE.MeshStandardMaterial({ color: srgb([52/255,196/255,214/255]), roughness: 0.5 }));
+    water.position.set(0, -1, 0); water.receiveShadow = true; scene.add(water); water.userData.env = true;
+    const dock = new THREE.Mesh(new THREE.BoxGeometry(33, 0.5, 6), new THREE.MeshStandardMaterial({ color: srgb([205/255,150/255,94/255]), roughness: 0.8 }));
+    dock.position.set(0, 1.15, 0); dock.receiveShadow = true; scene.add(dock); dock.userData.env = true;
+  }
+  return { scene, kidGroups, bbox, headBox };
+}
+
+// ---------- outline pass ----------
+const maskMat = new Map();
+function idMaterial(id) {
+  if (!maskMat.has(id)) maskMat.set(id, new THREE.MeshBasicMaterial({ color: new THREE.Color(id*8/255, 0, 0) }));
+  return maskMat.get(id);
+}
+const blackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const postScene = new THREE.Scene();
+const postCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+const postMat = new THREE.ShaderMaterial({
+  uniforms: { tColor: { value: null }, tMask: { value: null }, texel: { value: new THREE.Vector2() }, radius: { value: 2.5 } },
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tColor; uniform sampler2D tMask; uniform vec2 texel; uniform float radius; varying vec2 vUv;
+    void main(){
+      vec4 col = texture2D(tColor, vUv);
+      float c = texture2D(tMask, vUv).r;
+      float edge = 0.0;
+      for (int i = -4; i <= 4; i++) for (int j = -4; j <= 4; j++) {
+        vec2 o = vec2(float(i), float(j));
+        if (length(o) > radius) continue;
+        float n = texture2D(tMask, vUv + o * texel).r;
+        if (n > 0.001 && abs(n - c) > 0.001) edge = 1.0;
+      }
+      vec3 ink = vec3(34.0, 22.0, 36.0) / 255.0;
+      gl_FragColor = vec4(mix(col.rgb, ink, edge), 1.0);
+    }`,
+});
+postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), postMat));
+
+function renderTile(sceneName, w, h, mode) {
+  const data = scenes[sceneName];
+  if (!data) throw new Error('missing scene ' + sceneName);
+  const env = !!(data.extra && data.extra.water) || mode === 'lineup' || sceneName.startsWith('pose_');
+  const { scene, kidGroups, bbox, headBox } = buildScene(data, { environment: env });
+  const camera = new THREE.PerspectiveCamera(40, w/h, 0.1, 1000);
+  let box = mode === 'head' ? headBox : bbox;
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  let halfW = size.x/2*1.12, halfH = size.y/2*1.12;
+  if (mode === 'head') { halfW = size.x/2*1.05; halfH = size.y/2*1.05; }
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(20));
+  const dist = Math.max(halfH/tanHalf, halfW/(tanHalf*(w/h)));
+  const pitch = THREE.MathUtils.degToRad(mode === 'head' ? 0 : 7);
+  camera.position.set(center.x, center.y + Math.sin(pitch)*dist, center.z + Math.cos(pitch)*dist + Math.max(size.z/2, 0));
+  camera.lookAt(center);
+  renderer.setSize(w, h, false);
+  renderer.setPixelRatio(1);
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+  const tile = document.createElement('canvas'); tile.width = w; tile.height = h;
+  const tctx = tile.getContext('2d');
+  tctx.drawImage(renderer.domElement, 0, 0);
+  // mask pass: each kid in its own flat color, everything else black (still occludes)
+  const maskRT = new THREE.WebGLRenderTarget(w, h);
+  const saved = [];
+  scene.traverse(o => { if (o.isMesh) saved.push([o, o.material, o.visible]); });
+  scene.traverse(o => { if (o.isMesh) {
+    if (o.userData.gui) { o.visible = false; return; }
+    let g = o.parent; while (g && !g.userData.id) g = g.parent;
+    o.material = g ? idMaterial(g.userData.id) : blackMat;
+  }});
+  const bg = scene.background; scene.background = new THREE.Color(0,0,0);
+  renderer.setRenderTarget(maskRT); renderer.render(scene, camera);
+  const mask = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(maskRT, 0, 0, w, h, mask);
+  renderer.setRenderTarget(null);
+  scene.background = bg;
+  for (const [o, m, v] of saved) { o.material = m; o.visible = v; }
+  maskRT.dispose();
+  const ids = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const src = ((h - 1 - y) * w + x) * 4; // GL rows are bottom-up
+    ids[y * w + x] = mask[src] > 2 ? Math.round(mask[src] / 8) : 0;
+  }
+  { let nz = 0, mx = 0; for (let k = 0; k < w*h; k++) { if (ids[k]) nz++; mx = Math.max(mx, mask[k*4]); }  }
+  const img = tctx.getImageData(0, 0, w, h);
+  const R = Math.max(1.5, Math.min(w, h) / 160), Ri = Math.ceil(R);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const c = ids[y * w + x];
+    let edge = false;
+    for (let j = -Ri; j <= Ri && !edge; j++) for (let i = -Ri; i <= Ri; i++) {
+      if (i * i + j * j > R * R) continue;
+      const xx = x + i, yy = y + j;
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+      const n = ids[yy * w + xx];
+      if (n > 0 && n !== c && (c === 0 || n < c)) { edge = true; break; }
+    }
+    if (edge) { const k = (y * w + x) * 4; img.data[k] = 34; img.data[k+1] = 22; img.data[k+2] = 36; }
+  }
+  tctx.putImageData(img, 0, 0);
+  return tile;
+}
+
+// spec: { cols, tileW, tileH, title, tiles: [{scene, label, mode}] }
+const sheet = document.getElementById('sheet');
+const rows = Math.ceil(spec.tiles.length / spec.cols);
+const labelH = 30, titleH = spec.title ? 44 : 0;
+sheet.width = spec.cols * spec.tileW; sheet.height = titleH + rows * (spec.tileH + labelH);
+const sctx = sheet.getContext('2d');
+sctx.fillStyle = '#fffaf0'; sctx.fillRect(0,0,sheet.width,sheet.height);
+if (spec.title) { sctx.fillStyle = '#222'; sctx.font = 'bold 26px sans-serif'; sctx.fillText(spec.title, 14, 31); }
+spec.tiles.forEach((t, i) => {
+  const c = i % spec.cols, r = Math.floor(i / spec.cols);
+  const x = c * spec.tileW, y = titleH + r * (spec.tileH + labelH);
+  const img = renderTile(t.scene, spec.tileW, spec.tileH, t.mode);
+  sctx.drawImage(img, x, y, spec.tileW, spec.tileH);
+  sctx.fillStyle = '#222'; sctx.font = 'bold 18px sans-serif'; sctx.textAlign = 'center';
+  sctx.fillText(t.label || t.scene, x + spec.tileW/2, y + spec.tileH + 21); sctx.textAlign = 'left';
+});
+document.title = 'done';
+</script>
+</body>
+</html>
