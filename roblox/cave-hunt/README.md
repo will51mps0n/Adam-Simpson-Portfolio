@@ -12,7 +12,7 @@ Two Studio scripts for an asymmetric hide-and-seek game: one player is the monst
 Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/a178508db66cad4fe898456d5bf4295e7dd31d00/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/3226886cf3af66340fc7e8c3fa39749516ecc679/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
 ```
 
 It builds the cave, then moves your models from Workspace into it.
@@ -24,7 +24,7 @@ It builds the cave, then moves your models from Workspace into it.
 Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/a178508db66cad4fe898456d5bf4295e7dd31d00/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/3226886cf3af66340fc7e8c3fa39749516ecc679/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
 ```
 
 It downloads `CaveBuilder.lua` from GitHub and runs it. It also turns on **Allow HTTP Requests** for the place, which the download needs.
@@ -42,7 +42,7 @@ The cave is carved inside **a big block of rock just past the -Z edge of your Ba
 After the cave is built, run this in the Command Bar, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/a178508db66cad4fe898456d5bf4295e7dd31d00/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/3226886cf3af66340fc7e8c3fa39749516ecc679/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
 ```
 
 You don't need to set anything up first. **The first time it runs, it picks up the models already in your Workspace** (including ones inside folders) and moves them into **ServerStorage → CaveAssets**:
