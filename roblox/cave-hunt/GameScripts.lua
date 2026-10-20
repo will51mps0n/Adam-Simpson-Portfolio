@@ -161,15 +161,26 @@ local function addFlashlight(character)
 	mount.Position = Vector3.new(0, 0.2, -0.7)
 	mount.Parent = head
 
+	-- a focused beam (a bright spot where you point) with a faint wider halo round it, like a real flashlight
 	local beam = Instance.new("SpotLight")
 	beam.Name = "Beam"
 	beam.Face = Enum.NormalId.Front
-	beam.Angle = 55
-	beam.Range = 60 -- as far as Roblox lights go
-	beam.Brightness = 3
+	beam.Angle = 24
+	beam.Range = 50
+	beam.Brightness = 4
 	beam.Color = LIGHT
 	beam.Shadows = true
 	beam.Parent = mount
+
+	local halo = Instance.new("SpotLight")
+	halo.Name = "Halo"
+	halo.Face = Enum.NormalId.Front
+	halo.Angle = 70
+	halo.Range = 24
+	halo.Brightness = 0.3
+	halo.Color = LIGHT
+	halo.Shadows = false
+	halo.Parent = mount
 end
 
 -- the client's movement script reads these (sprinting and crouching happen on the client)
@@ -207,7 +218,8 @@ local function setupHider(player, character)
 	giveTools(player, HIDER_TOOLS)
 end
 
--- where each hider is looking (sent ~10 times a second), so everyone sees their beam sweep around
+-- where each hider is looking (sent ~10 times a second), so everyone sees their beam sweep around.
+-- It's an attribute rather than the light's own position, so it never drags your own beam back.
 local lastAim = {}
 aimRemote.OnServerEvent:Connect(function(player, look)
 	local head = player.Character and player.Character:FindFirstChild("Head")
@@ -216,7 +228,7 @@ aimRemote.OnServerEvent:Connect(function(player, look)
 		return
 	end
 	lastAim[player] = os.clock()
-	mount.CFrame = CFrame.lookAt(mount.Position, mount.Position + look.Unit)
+	mount:SetAttribute("Aim", look.Unit) -- other players' screens turn the beam (yours already points where you look)
 end)
 
 toggleLight.OnServerEvent:Connect(function(player)
@@ -224,7 +236,11 @@ toggleLight.OnServerEvent:Connect(function(player)
 	local mount = head and head:FindFirstChild("Flashlight")
 	if mount and not player:GetAttribute("Hidden") then
 		local on = not mount.Beam.Enabled
-		mount.Beam.Enabled = on
+		for _, light in ipairs(mount:GetChildren()) do
+			if light:IsA("Light") then
+				light.Enabled = on
+			end
+		end
 		player:SetAttribute("FlashlightOn", on) -- the hotbar shows Light: ON / OFF
 	end
 end)
@@ -2016,7 +2032,7 @@ task.spawn(function()
 		if root then
 			local glow = root:FindFirstChild("CaveHunt_MyGlow")
 			if not glow then
-				glow = make("PointLight", root, { Name = "CaveHunt_MyGlow", Range = 9, Brightness = 0.35, Color = Color3.fromRGB(255, 238, 210), Shadows = false })
+				glow = make("PointLight", root, { Name = "CaveHunt_MyGlow", Range = 6, Brightness = 0.2, Color = Color3.fromRGB(255, 238, 210), Shadows = false })
 			end
 			glow.Enabled = beam ~= nil and beam.Enabled and not player:GetAttribute("Hidden")
 		end
@@ -2879,7 +2895,8 @@ end)
 -- second so other players see your beam sweep around as well
 local aimRemote = ReplicatedStorage:WaitForChild("CaveHunt_Aim", 10)
 local lastSent, lastSentAt = Vector3.new(), 0
-RunService.RenderStepped:Connect(function()
+RunService:BindToRenderStep("CaveHunt_FlashlightAim", Enum.RenderPriority.Camera.Value + 2, function(dt)
+	-- yours: exactly where the camera looks this frame
 	local head = player.Character and player.Character:FindFirstChild("Head")
 	local mount = head and head:FindFirstChild("Flashlight")
 	if mount then
@@ -2888,6 +2905,17 @@ RunService.RenderStepped:Connect(function()
 		if aimRemote and os.clock() - lastSentAt > 0.1 and (look - lastSent).Magnitude > 0.05 then
 			lastSent, lastSentAt = look, os.clock()
 			aimRemote:FireServer(look)
+		end
+	end
+	-- everyone else's: where they last said they were looking, turned smoothly
+	for _, other in ipairs(Players:GetPlayers()) do
+		local otherHead = other ~= player and other.Character and other.Character:FindFirstChild("Head")
+		local otherMount = otherHead and otherHead:FindFirstChild("Flashlight")
+		local aim = otherMount and otherMount:GetAttribute("Aim")
+		if aim then
+			local current = otherMount.CFrame.LookVector
+			local look = current:Lerp(aim, math.min(1, dt * 12))
+			otherMount.CFrame = CFrame.lookAt(otherMount.Position, otherMount.Position + look)
 		end
 	end
 end)
