@@ -22,14 +22,18 @@
 	      phone rings out loud and flashes, even inside a closet). The
 	      monster gets Leap, Sense (see hiders through walls), Scent (see
 	      where hiders walked) and Roar (shake hiders, knock out their lights).
-	      Picking an item uses it; its slot counts down while it recharges
+	      Picking an item uses it; its slot counts down while it recharges.
+	      The shop's troll items live here too (Price and Who attributes)
+	  ServerScriptService.CaveHunt_Shop
+	      coins (on the leaderboard), the shop, the troll items, phone calls
+	      and the glowing coins lying around the cave
 	  ServerScriptService.CaveHunt_Hiding
 	      hiders press E at any HidingSpot to hide inside it (invisible, light
 	      off) and E again to come out. The monster pressing E on a hiding
 	      spot ("Search") throws whoever is inside out
 	  StarterPlayerScripts.CaveHunt_Client
-	      the role button, flashlight aiming, the cave mood (only while you're
-	      inside the cave; red night vision for the monster) and flickering lights
+	      the role and shop buttons, flashlight aiming, the cave mood (only while
+	      you're inside the cave; red night vision for the monster) and flickering lights
 
 	Running it again replaces these scripts with the latest version.
 ]]
@@ -48,11 +52,9 @@ local HIDER_SPEED = 16
 local MONSTER_SPEED = 26
 local MONSTER_SCALE = 1.5 -- the built-in monster is 1.5x as tall as a hider
 local LIGHT = Color3.fromRGB(255, 238, 210)
-local PHONE_COOLDOWN = 8
 local ROAR_COOLDOWN = 25
 local ROAR_RANGE = 140
--- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
-local RINGTONE = "rbxasset://sounds/electronicpingshort.wav"
+-- a built-in Roblox sound; swap in any sound you like, e.g. "rbxassetid://1234567"
 local ROAR_SOUND = "rbxasset://sounds/uuhhh.mp3"
 
 local function remote(name)
@@ -66,10 +68,8 @@ local function remote(name)
 end
 local setRole = remote("CaveHunt_SetRole")
 local toggleLight = remote("CaveHunt_ToggleFlashlight")
-local ringRemote = remote("CaveHunt_Ring")
 local roarRemote = remote("CaveHunt_Roar")
 local shakeRemote = remote("CaveHunt_Shake")
-local notify = remote("CaveHunt_Notify")
 local Debris = game:GetService("Debris")
 
 -- hotbar items: Tools that GameScripts keeps in ServerStorage.CaveHunt_Tools
@@ -89,11 +89,11 @@ local function giveTools(player, names)
 		end
 	end
 end
-local function clearTools(player)
+local function clearTools(player) -- items bought in the shop are kept (CaveHunt_Shop looks after those)
 	for _, holder in ipairs({ player:FindFirstChildOfClass("Backpack"), player.Character }) do
 		if holder then
 			for _, tool in ipairs(holder:GetChildren()) do
-				if tool:IsA("Tool") then
+				if tool:IsA("Tool") and not tool:GetAttribute("Item") then
 					tool:Destroy()
 				end
 			end
@@ -264,6 +264,10 @@ local function setupMonster(player, character)
 				if victimHumanoid and victimHumanoid.Health > 0 and os.clock() - (lastHit[victim] or 0) > 1 then
 					lastHit[victim] = os.clock()
 					victimHumanoid.Health = 0
+					local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
+					if reward then
+						reward:Fire(player, "Catch")
+					end
 				end
 			end)
 		end
@@ -382,70 +386,6 @@ roarRemote.OnServerEvent:Connect(function(player)
 	end
 end)
 
------------------------------------------------------------------- hider phones
--- ring another hider: their phone rings out loud and flashes for 4 seconds, even in a closet
-local lastCall = {}
-ringRemote.OnServerEvent:Connect(function(caller, target)
-	if typeof(target) ~= "Instance" or not target:IsA("Player") or target == caller or target.Parent ~= Players then
-		return
-	end
-	if caller:GetAttribute("Role") == "Monster" or target:GetAttribute("Role") == "Monster" then
-		return
-	end
-	if os.clock() - (lastCall[caller] or -math.huge) < PHONE_COOLDOWN - 1 then
-		return
-	end
-	local head = target.Character and target.Character:FindFirstChild("Head")
-	if not head or head:FindFirstChild("Ringtone") then
-		return
-	end
-	lastCall[caller] = os.clock()
-	notify:FireClient(target, caller.DisplayName .. " is calling you!")
-	notify:FireClient(caller, "Calling " .. target.DisplayName .. "...")
-
-	local sound = Instance.new("Sound")
-	sound.Name = "Ringtone"
-	sound.SoundId = RINGTONE
-	sound.Looped = true
-	sound.Volume = 2
-	sound.RollOffMaxDistance = 150
-	sound.Parent = head
-	sound:Play()
-
-	local glow = Instance.new("PointLight")
-	glow.Color = Color3.fromRGB(120, 180, 255)
-	glow.Range = 12
-	glow.Brightness = 2
-	glow.Parent = head
-
-	local tag = Instance.new("BillboardGui")
-	tag.Size = UDim2.fromOffset(140, 40)
-	tag.StudsOffset = Vector3.new(0, 3, 0)
-	tag.AlwaysOnTop = true
-	tag.MaxDistance = 90
-	tag.LightInfluence = 0
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Text = "RING RING"
-	label.TextScaled = true
-	label.Font = Enum.Font.GothamBlack
-	label.TextColor3 = Color3.fromRGB(140, 200, 255)
-	label.TextStrokeTransparency = 0.3
-	label.Parent = tag
-	tag.Parent = head
-
-	task.spawn(function()
-		for i = 1, 16 do
-			glow.Enabled = i % 2 == 1
-			task.wait(0.25)
-		end
-		sound:Destroy()
-		glow:Destroy()
-		tag:Destroy()
-	end)
-end)
-
 ------------------------------------------------------------------ joining + respawning
 local function onPlayer(player)
 	if player:GetAttribute("Role") == nil then
@@ -475,7 +415,6 @@ Players.PlayerRemoving:Connect(function(player)
 	busy[player] = nil
 	converting[player] = nil
 	lastRoar[player] = nil
-	lastCall[player] = nil
 end)
 ]==]
 
@@ -486,8 +425,16 @@ SOURCES.Hiding = [==[
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local hiding = {} -- player -> { spot = Model, prompt = ProximityPrompt, saved = {} }
+
+local function tell(player, text)
+	local notify = ReplicatedStorage:FindFirstChild("CaveHunt_Notify")
+	if notify then
+		notify:FireClient(player, text)
+	end
+end
 
 -- hide/show a character and switch its lights off/on, remembering how it was
 local function setHidden(character, hide, saved)
@@ -518,6 +465,7 @@ local function leave(player)
 	hiding[player] = nil
 	player:SetAttribute("Hidden", nil)
 	h.spot:SetAttribute("Occupied", false)
+	h.spot:SetAttribute("OccupantId", nil)
 	h.prompt.ActionText = "Hide"
 	local character = player.Character
 	if character and character.Parent then
@@ -551,10 +499,15 @@ local function hide(player, spot, prompt)
 	if not (root and humanoid and point) or humanoid.Health <= 0 or spot:GetAttribute("Occupied") then
 		return
 	end
+	if (spot:GetAttribute("LockedUntil") or 0) > workspace:GetServerTimeNow() then -- a Spot Lock from the shop
+		tell(player, "It's jammed! Try again in a few seconds.")
+		return
+	end
 	local saved = {}
 	hiding[player] = { spot = spot, prompt = prompt, saved = saved }
 	player:SetAttribute("Hidden", true)
 	spot:SetAttribute("Occupied", true)
+	spot:SetAttribute("OccupantId", player.UserId)
 	character:PivotTo(point.CFrame)
 	root.Anchored = true
 	setHidden(character, true, saved)
@@ -580,7 +533,17 @@ local function setup(spot)
 	prompt.Parent = anchor
 	prompt.Triggered:Connect(function(player)
 		if player:GetAttribute("Role") == "Monster" then
-			knockOut(spot) -- the monster searches the spot
+			local found = knockOut(spot) -- the monster searches the spot
+			if found then
+				local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
+				if reward then
+					reward:Fire(player, "Find")
+				end
+				tell(found, "The monster found you! RUN!")
+			elseif spot:GetAttribute("FakeOccupied") then
+				tell(player, "Nobody in there. It was a decoy!")
+			end
+			spot:SetAttribute("FakeOccupied", nil) -- a Fake Hider from the shop
 			return
 		end
 		local h = hiding[player]
@@ -619,8 +582,665 @@ end
 knock.OnInvoke = knockOut
 ]==]
 
+SOURCES.Shop = [==[
+-- CaveHunt: coins, the shop, the troll items, phone calls and the coins lying around the cave.
+-- Each item's price, who can buy it and its description are on its Tool in
+-- ServerStorage.CaveHunt_Tools (the Price and Who attributes, and ToolTip).
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local CollectionService = game:GetService("CollectionService")
+local Debris = game:GetService("Debris")
+
+local START_COINS = 40
+local INCOME = 1 -- every hider in the cave earns this many coins...
+local INCOME_EVERY = 5 -- ...every this many seconds
+local REWARDS = { Catch = 15, Find = 5 } -- the monster: catching a hider, pulling one out of a hiding spot
+local PICKUPS = 10 -- glowing coins lying around the cave (hiders pick them up)
+local PICKUP_VALUE = 5
+local PHONE_COOLDOWN = 8
+-- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
+local RINGTONE = "rbxasset://sounds/electronicpingshort.wav"
+local AIRHORN_SOUND = "rbxasset://sounds/electronicpingshort.wav"
+local SLIP_SOUND = "rbxasset://sounds/swoosh.wav"
+
+local function remote(name, className)
+	local r = ReplicatedStorage:FindFirstChild(name)
+	if not r then
+		r = Instance.new(className or "RemoteEvent")
+		r.Name = name
+		r.Parent = ReplicatedStorage
+	end
+	return r
+end
+local notify = remote("CaveHunt_Notify")
+local shake = remote("CaveHunt_Shake")
+local ringRemote = remote("CaveHunt_Ring")
+local useRemote = remote("CaveHunt_UseItem")
+local reveal = remote("CaveHunt_Reveal")
+local buy = remote("CaveHunt_Buy", "RemoteFunction")
+
+-- other scripts give out coins with ServerStorage.CaveHunt_Reward:Fire(player, "Catch" or "Find")
+local reward = ServerStorage:FindFirstChild("CaveHunt_Reward")
+if not reward then
+	reward = Instance.new("BindableEvent")
+	reward.Name = "CaveHunt_Reward"
+	reward.Parent = ServerStorage
+end
+
+------------------------------------------------------------------ the catalog
+-- the shop sells every Tool in CaveHunt_Tools that has a Price; the client reads ReplicatedStorage.CaveHunt_Shop
+local SHOP = {}
+local catalog = Instance.new("Folder")
+catalog.Name = "CaveHunt_Shop"
+local templates = ServerStorage:WaitForChild("CaveHunt_Tools", 10)
+for _, tool in ipairs(templates and templates:GetChildren() or {}) do
+	local key, price = tool:GetAttribute("Item"), tool:GetAttribute("Price")
+	if tool:IsA("Tool") and type(key) == "string" and type(price) == "number" then
+		local item = { key = key, template = tool, name = tool.Name, price = price, who = tool:GetAttribute("Who") or "Any" }
+		SHOP[key] = item
+		local entry = Instance.new("Configuration")
+		entry.Name = key
+		entry:SetAttribute("Name", item.name)
+		entry:SetAttribute("Price", price)
+		entry:SetAttribute("Who", item.who)
+		entry:SetAttribute("Tip", tool.ToolTip)
+		entry:SetAttribute("Order", tool:GetAttribute("Order") or 99)
+		entry.Parent = catalog
+	end
+end
+local oldCatalog = ReplicatedStorage:FindFirstChild("CaveHunt_Shop")
+if oldCatalog then
+	oldCatalog:Destroy()
+end
+catalog.Parent = ReplicatedStorage
+
+------------------------------------------------------------------ helpers
+local function alive(player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if humanoid and root and humanoid.Health > 0 then
+		return character, humanoid, root
+	end
+	return nil
+end
+
+local function isHider(p)
+	return typeof(p) == "Instance" and p:IsA("Player") and p.Parent == Players and p:GetAttribute("Role") ~= "Monster"
+end
+
+local function allowed(item, player)
+	return item.who ~= "Hider" or player:GetAttribute("Role") ~= "Monster"
+end
+
+-- the character a touching part belongs to (works for monster models with nested parts too)
+local function characterFrom(part)
+	local model = part:FindFirstAncestorOfClass("Model")
+	while model and not model:FindFirstChildOfClass("Humanoid") do
+		model = model:FindFirstAncestorOfClass("Model")
+	end
+	return model
+end
+
+local function spotPosition(spot)
+	local point = spot:FindFirstChild("HidePoint", true)
+	return point and point.Position or spot:GetPivot().Position
+end
+
+local function nearestSpot(from, range, wanted)
+	local best, bestDistance = nil, range
+	for _, spot in ipairs(CollectionService:GetTagged("HidingSpot")) do
+		if spot:IsDescendantOf(workspace) and (not wanted or wanted(spot)) then
+			local d = (spotPosition(spot) - from).Magnitude
+			if d < bestDistance then
+				best, bestDistance = spot, d
+			end
+		end
+	end
+	return best
+end
+
+local function spotOf(player) -- the hiding spot someone is in
+	for _, spot in ipairs(CollectionService:GetTagged("HidingSpot")) do
+		if spot:GetAttribute("OccupantId") == player.UserId then
+			return spot
+		end
+	end
+	return nil
+end
+
+local function label(parent, text, color, seconds, height)
+	local tag = Instance.new("BillboardGui")
+	tag.Size = UDim2.fromOffset(140, 40)
+	tag.StudsOffset = Vector3.new(0, height or 3, 0)
+	tag.AlwaysOnTop = true
+	tag.MaxDistance = 90
+	tag.LightInfluence = 0
+	local words = Instance.new("TextLabel")
+	words.Size = UDim2.fromScale(1, 1)
+	words.BackgroundTransparency = 1
+	words.Text = text
+	words.TextScaled = true
+	words.Font = Enum.Font.GothamBlack
+	words.TextColor3 = color
+	words.TextStrokeTransparency = 0.3
+	words.Parent = tag
+	tag.Parent = parent
+	Debris:AddItem(tag, seconds)
+	return tag
+end
+
+local function playSound(parent, id, seconds, volume, speed, looped)
+	local sound = Instance.new("Sound")
+	sound.SoundId = id
+	sound.Volume = volume
+	sound.PlaybackSpeed = speed or 1
+	sound.Looped = looped or false
+	sound.RollOffMaxDistance = 300
+	sound.Parent = parent
+	sound:Play()
+	Debris:AddItem(sound, seconds)
+	return sound
+end
+
+------------------------------------------------------------------ coins
+local function coinsOf(player)
+	local stats = player:FindFirstChild("leaderstats")
+	return stats and stats:FindFirstChild("Coins")
+end
+
+local function addCoins(player, n, why)
+	local coins = coinsOf(player)
+	if coins then
+		coins.Value += n
+		if why then
+			notify:FireClient(player, ("+%d coins: %s"):format(n, why))
+		end
+	end
+end
+
+reward.Event:Connect(function(player, kind)
+	if typeof(player) == "Instance" and player:IsA("Player") and REWARDS[kind] then
+		addCoins(player, REWARDS[kind], kind == "Catch" and "you caught a hider" or "you found a hider")
+	end
+end)
+
+local function inCave(position)
+	local cave = workspace:FindFirstChild("CaveSystem")
+	local center = cave and cave:GetAttribute("BoxCenter")
+	local size = cave and cave:GetAttribute("BoxSize")
+	if not (center and size) then
+		return true
+	end
+	local d = position - center
+	return math.abs(d.X) < size.X / 2 and math.abs(d.Y) < size.Y / 2 and math.abs(d.Z) < size.Z / 2
+end
+
+task.spawn(function() -- hiders earn coins for staying alive in the cave
+	while true do
+		task.wait(INCOME_EVERY)
+		for _, player in ipairs(Players:GetPlayers()) do
+			local _, _, root = alive(player)
+			if root and player:GetAttribute("Role") ~= "Monster" and inCave(root.Position) then
+				addCoins(player, INCOME)
+			end
+		end
+	end
+end)
+
+-- glowing coins in front of random hiding spots; hiders grab them by walking into them
+local pickupAt = {} -- hiding spot -> coin
+local function spawnPickup()
+	local spots = CollectionService:GetTagged("HidingSpot")
+	if #spots == 0 then
+		return
+	end
+	local spot = spots[math.random(1, #spots)]
+	local exit = spot:FindFirstChild("ExitPoint", true)
+	if not exit or pickupAt[spot] or not spot:IsDescendantOf(workspace) then
+		return
+	end
+	local coin = Instance.new("Part")
+	coin.Name = "CaveCoin"
+	coin.Shape = Enum.PartType.Cylinder
+	coin.Size = Vector3.new(0.3, 1.8, 1.8)
+	coin.Color = Color3.fromRGB(255, 196, 40)
+	coin.Material = Enum.Material.Metal
+	coin.Anchored = true
+	coin.CanCollide = false
+	coin.CanQuery = false
+	coin.CastShadow = false
+	coin.CFrame = CFrame.new(exit.Position - Vector3.new(0, 1, 0))
+	local glow = Instance.new("PointLight")
+	glow.Color = coin.Color
+	glow.Range = 7
+	glow.Brightness = 0.7
+	glow.Parent = coin
+	coin.Parent = workspace
+	CollectionService:AddTag(coin, "CaveCoin")
+	pickupAt[spot] = coin
+	coin.Touched:Connect(function(part)
+		local character = characterFrom(part)
+		local who = character and Players:GetPlayerFromCharacter(character)
+		if who and who:GetAttribute("Role") ~= "Monster" and coin.Parent and alive(who) then
+			coin:Destroy()
+			pickupAt[spot] = nil
+			addCoins(who, PICKUP_VALUE, "you found a coin")
+		end
+	end)
+end
+
+task.spawn(function()
+	task.wait(3) -- let the cave and its hiding spots load
+	while true do
+		local count = 0
+		for spot, coin in pairs(pickupAt) do
+			if coin.Parent then
+				count += 1
+			else
+				pickupAt[spot] = nil
+			end
+		end
+		for _ = count + 1, PICKUPS do
+			spawnPickup()
+		end
+		task.wait(20)
+	end
+end)
+
+------------------------------------------------------------------ phones
+-- a phone rings out loud and flashes on `part` (a hider's head, or a Fake Noise)
+local function ringAt(part, seconds)
+	if part:FindFirstChild("Ringtone") then
+		return false
+	end
+	local sound = playSound(part, RINGTONE, seconds, 2, 1, true)
+	sound.Name = "Ringtone"
+	sound.RollOffMaxDistance = 150
+	local glow = Instance.new("PointLight")
+	glow.Color = Color3.fromRGB(120, 180, 255)
+	glow.Range = 12
+	glow.Brightness = 2
+	glow.Parent = part
+	Debris:AddItem(glow, seconds)
+	label(part, "RING RING", Color3.fromRGB(140, 200, 255), seconds)
+	task.spawn(function()
+		while glow.Parent do
+			glow.Enabled = not glow.Enabled
+			task.wait(0.25)
+		end
+	end)
+	return true
+end
+
+-- the Phone: ring another hider. It rings for 4 seconds, even inside a closet
+local lastCall = {}
+ringRemote.OnServerEvent:Connect(function(caller, target)
+	if not isHider(caller) or not isHider(target) or target == caller then
+		return
+	end
+	if os.clock() - (lastCall[caller] or -math.huge) < PHONE_COOLDOWN - 1 then
+		return
+	end
+	local head = target.Character and target.Character:FindFirstChild("Head")
+	if head and ringAt(head, 4) then
+		lastCall[caller] = os.clock()
+		notify:FireClient(target, caller.DisplayName .. " is calling you!")
+		notify:FireClient(caller, "Calling " .. target.DisplayName .. "...")
+	end
+end)
+
+------------------------------------------------------------------ what each item does
+-- each returns true when it worked (that uses up one charge)
+local EFFECTS = {}
+local WORKS_WHILE_HIDDEN = { Snitch = true, FakeNoise = true }
+
+-- Snitch: the monster sees another hider (or the spot they're hiding in) for 5 seconds
+function EFFECTS.Snitch(player, target)
+	if not isHider(target) or target == player or not alive(target) then
+		notify:FireClient(player, "Pick another hider.")
+		return false
+	end
+	local monsters = {}
+	for _, other in ipairs(Players:GetPlayers()) do
+		if other:GetAttribute("Role") == "Monster" then
+			table.insert(monsters, other)
+		end
+	end
+	if #monsters == 0 then
+		notify:FireClient(player, "There's no monster to tell right now.")
+		return false
+	end
+	local where = (target:GetAttribute("Hidden") and spotOf(target)) or target.Character
+	for _, monster in ipairs(monsters) do
+		reveal:FireClient(monster, where, 5, "Someone snitched on " .. target.DisplayName .. "!")
+	end
+	notify:FireClient(target, "Someone snitched on you! The monster knows where you are.")
+	notify:FireClient(player, "You snitched on " .. target.DisplayName .. ".")
+	return true
+end
+
+-- Glowstick: thrown where you're looking; lights up the area for 25 seconds
+function EFFECTS.Glowstick(player, aim)
+	local character, _, root = alive(player)
+	local head = character:FindFirstChild("Head") or root
+	local dir = (typeof(aim) == "Vector3" and aim.Magnitude > 0.1) and aim.Unit or head.CFrame.LookVector
+	local stick = Instance.new("Part")
+	stick.Name = "Glowstick"
+	stick.Size = Vector3.new(0.3, 0.3, 1.4)
+	stick.Color = Color3.fromRGB(90, 255, 120)
+	stick.Material = Enum.Material.Neon
+	stick.CastShadow = false
+	stick.CFrame = CFrame.lookAt(head.Position + dir * 2, head.Position + dir * 3)
+	local light = Instance.new("PointLight")
+	light.Color = stick.Color
+	light.Range = 22
+	light.Brightness = 1.2
+	light.Parent = stick
+	stick.Parent = workspace
+	stick:SetNetworkOwner(nil)
+	stick.AssemblyLinearVelocity = dir * 60 + Vector3.new(0, 18, 0)
+	stick.AssemblyAngularVelocity = Vector3.new(math.random(-8, 8), math.random(-8, 8), math.random(-8, 8))
+	Debris:AddItem(stick, 25)
+	return true
+end
+
+-- Fake Noise: a phone rings where you're aiming, for 5 seconds
+function EFFECTS.FakeNoise(player, point)
+	local _, _, root = alive(player)
+	if typeof(point) ~= "Vector3" or (point - root.Position).Magnitude > 200 then
+		return false
+	end
+	local source = Instance.new("Part")
+	source.Name = "FakeNoise"
+	source.Anchored = true
+	source.CanCollide = false
+	source.CanQuery = false
+	source.CanTouch = false
+	source.Transparency = 1
+	source.Size = Vector3.new(1, 1, 1)
+	source.Position = point
+	source.Parent = workspace
+	Debris:AddItem(source, 6)
+	ringAt(source, 5)
+	notify:FireClient(player, "A phone is ringing over there...")
+	return true
+end
+
+-- Spot Lock: the nearest hiding spot is jammed for 10 seconds; nobody can get in
+function EFFECTS.SpotLock(player)
+	local _, _, root = alive(player)
+	local now = workspace:GetServerTimeNow()
+	local spot = nearestSpot(root.Position, 14, function(s)
+		return (s:GetAttribute("LockedUntil") or 0) < now
+	end)
+	if not spot then
+		notify:FireClient(player, "Stand next to a hiding spot to jam it.")
+		return false
+	end
+	spot:SetAttribute("LockedUntil", now + 10)
+	local anchor = spot:FindFirstChild("HidePoint", true) or spot.PrimaryPart or spot:FindFirstChildWhichIsA("BasePart", true)
+	if anchor then
+		label(anchor, "JAMMED", Color3.fromRGB(255, 90, 70), 10, 5)
+	end
+	notify:FireClient(player, "Jammed! Nobody can get in there for 10 seconds.")
+	return true
+end
+
+-- Swap: you and another hider swap places
+function EFFECTS.Swap(player, target)
+	if not isHider(target) or target == player or not alive(target) then
+		notify:FireClient(player, "Pick another hider.")
+		return false
+	end
+	if target:GetAttribute("Hidden") then
+		notify:FireClient(player, target.DisplayName .. " is hiding right now. Try again in a bit.")
+		return false
+	end
+	local mine, theirs = player.Character:GetPivot(), target.Character:GetPivot()
+	player.Character:PivotTo(theirs)
+	target.Character:PivotTo(mine)
+	notify:FireClient(target, player.DisplayName .. " swapped places with you!")
+	notify:FireClient(player, "You swapped places with " .. target.DisplayName .. "!")
+	return true
+end
+
+-- Banana Peel: dropped at your feet; the next person who steps on it (not you) slips for 2 seconds
+local slipping = {}
+local function slip(victim, humanoid, owner)
+	if slipping[humanoid] then
+		return
+	end
+	slipping[humanoid] = true
+	local speed, power, height = humanoid.WalkSpeed, humanoid.JumpPower, humanoid.JumpHeight
+	humanoid.WalkSpeed, humanoid.JumpPower, humanoid.JumpHeight = 0, 0, 0
+	humanoid.Sit = true
+	local root = humanoid.Parent:FindFirstChild("HumanoidRootPart")
+	if root then
+		playSound(root, SLIP_SOUND, 3, 2, 0.8)
+	end
+	notify:FireClient(victim, "You slipped on " .. owner .. "'s banana peel!")
+	task.delay(2, function()
+		slipping[humanoid] = nil
+		if humanoid.Parent and humanoid.WalkSpeed == 0 then
+			humanoid.WalkSpeed, humanoid.JumpPower, humanoid.JumpHeight = speed, power, height
+			humanoid.Sit = false
+		end
+	end)
+end
+
+function EFFECTS.Banana(player)
+	local character, _, root = alive(player)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	local hit = workspace:Raycast(root.Position, Vector3.new(0, -12, 0), params)
+	if not hit then
+		notify:FireClient(player, "Stand on the ground to drop it.")
+		return false
+	end
+	local cf = CFrame.new(hit.Position) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
+	local peel = Instance.new("Part")
+	peel.Name = "BananaPeel"
+	peel.Size = Vector3.new(1.6, 0.25, 0.9)
+	peel.Color = Color3.fromRGB(245, 215, 60)
+	peel.Material = Enum.Material.SmoothPlastic
+	peel.Anchored = true
+	peel.CanCollide = false
+	peel.CanQuery = false
+	peel.CFrame = cf * CFrame.new(0, 0.12, 0)
+	local trigger = Instance.new("Part")
+	trigger.Name = "Trigger"
+	trigger.Size = Vector3.new(2.4, 2, 2.4)
+	trigger.Transparency = 1
+	trigger.Anchored = true
+	trigger.CanCollide = false
+	trigger.CanQuery = false
+	trigger.CFrame = cf * CFrame.new(0, 1, 0)
+	trigger.Parent = peel
+	peel.Parent = workspace
+	Debris:AddItem(peel, 90)
+	local owner = player.DisplayName
+	trigger.Touched:Connect(function(part)
+		local victimCharacter = characterFrom(part)
+		local victim = victimCharacter and Players:GetPlayerFromCharacter(victimCharacter)
+		local humanoid = victimCharacter and victimCharacter:FindFirstChildOfClass("Humanoid")
+		if not victim or victim == player or not humanoid or humanoid.Health <= 0 or not peel.Parent then
+			return
+		end
+		peel:Destroy()
+		slip(victim, humanoid, owner)
+		if player.Parent then
+			notify:FireClient(player, victim.DisplayName .. " slipped on your banana peel!")
+		end
+	end)
+	notify:FireClient(player, "Banana peel down. The next person to step on it slips.")
+	return true
+end
+
+-- Air Horn: HONK. Everyone within 60 studs gets their screen shaken, and the monster hears it from far away
+function EFFECTS.AirHorn(player)
+	local character, _, root = alive(player)
+	local horn = playSound(root, AIRHORN_SOUND, 1.5, 6, 0.3, true)
+	horn.RollOffMaxDistance = 400
+	label(character:FindFirstChild("Head") or root, "HONK!", Color3.fromRGB(255, 230, 80), 2.5)
+	for _, other in ipairs(Players:GetPlayers()) do
+		local otherRoot = other ~= player and other.Character and other.Character:FindFirstChild("HumanoidRootPart")
+		if otherRoot and (otherRoot.Position - root.Position).Magnitude < 60 then
+			shake:FireClient(other, player.DisplayName .. " blasted an air horn!")
+		end
+	end
+	return true
+end
+
+-- Fake Hider: the nearest empty hiding spot shows up as taken in the monster's Sense for 60 seconds
+local decoys = {}
+function EFFECTS.FakeHider(player)
+	local _, _, root = alive(player)
+	local spot = nearestSpot(root.Position, 20, function(s)
+		return not s:GetAttribute("Occupied") and not s:GetAttribute("FakeOccupied")
+	end)
+	if not spot then
+		notify:FireClient(player, "No empty hiding spot nearby.")
+		return false
+	end
+	local token = {}
+	decoys[spot] = token
+	spot:SetAttribute("FakeOccupied", true)
+	task.delay(60, function()
+		if decoys[spot] == token then
+			decoys[spot] = nil
+			spot:SetAttribute("FakeOccupied", nil)
+		end
+	end)
+	notify:FireClient(player, "Decoy set: the monster's Sense shows someone in that " .. tostring(spot:GetAttribute("HideType") or "spot") .. " for 60s.")
+	return true
+end
+
+------------------------------------------------------------------ buying + using
+local inventory = {} -- player -> { [item key] = charges }
+
+-- make the hotbar match what you own: one Tool per item ("Glowstick x3"), only the ones your role can use
+local function syncTools(player)
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	if not backpack then
+		return
+	end
+	local bag = inventory[player] or {}
+	local holders = { backpack }
+	if player.Character then
+		table.insert(holders, player.Character)
+	end
+	local have = {}
+	for _, holder in ipairs(holders) do
+		for _, tool in ipairs(holder:GetChildren()) do
+			local key = tool:IsA("Tool") and tool:GetAttribute("Item")
+			if key then
+				local item = SHOP[key]
+				if have[key] or not item or (bag[key] or 0) <= 0 or not allowed(item, player) then
+					tool:Destroy()
+				else
+					have[key] = true
+					tool:SetAttribute("Charges", bag[key])
+				end
+			end
+		end
+	end
+	for key, n in pairs(bag) do
+		local item = SHOP[key]
+		if item and n > 0 and not have[key] and allowed(item, player) then
+			local tool = item.template:Clone()
+			tool:SetAttribute("Charges", n)
+			tool.Parent = backpack
+		end
+	end
+end
+
+buy.OnServerInvoke = function(player, key)
+	local item = type(key) == "string" and SHOP[key]
+	if not item then
+		return false, "That's not in the shop."
+	end
+	if not allowed(item, player) then
+		return false, "Only hiders can use " .. item.name .. "."
+	end
+	local coins = coinsOf(player)
+	if not coins or coins.Value < item.price then
+		return false, "Not enough coins."
+	end
+	coins.Value -= item.price
+	local bag = inventory[player] or {}
+	inventory[player] = bag
+	bag[key] = (bag[key] or 0) + 1
+	syncTools(player)
+	return true, ("Bought %s! It's in your hotbar."):format(item.name)
+end
+
+local lastUse = {}
+useRemote.OnServerEvent:Connect(function(player, key, arg)
+	local item = type(key) == "string" and SHOP[key]
+	local bag = inventory[player]
+	if not item or not EFFECTS[key] or not bag or (bag[key] or 0) <= 0 or not allowed(item, player) or not alive(player) then
+		return
+	end
+	if os.clock() - (lastUse[player] or 0) < 0.5 then
+		return
+	end
+	lastUse[player] = os.clock()
+	if player:GetAttribute("Hidden") and not WORKS_WHILE_HIDDEN[key] then
+		notify:FireClient(player, "You can't use that while you're hiding.")
+		return
+	end
+	local ok, worked = pcall(EFFECTS[key], player, arg)
+	if not ok then
+		warn("[CaveHunt] " .. key .. " didn't work: " .. tostring(worked))
+	elseif worked then
+		bag[key] -= 1
+		syncTools(player)
+	end
+end)
+
+------------------------------------------------------------------ joining
+local function onPlayer(player)
+	local stats = player:FindFirstChild("leaderstats")
+	if not stats then
+		stats = Instance.new("Folder")
+		stats.Name = "leaderstats"
+		stats.Parent = player
+	end
+	if not stats:FindFirstChild("Coins") then
+		local coins = Instance.new("IntValue")
+		coins.Name = "Coins"
+		coins.Value = START_COINS
+		coins.Parent = stats
+	end
+	inventory[player] = inventory[player] or {}
+	-- a respawn or a role switch empties the hotbar; put bought items back
+	local function resync()
+		task.delay(1, function()
+			if player.Parent then
+				syncTools(player)
+			end
+		end)
+	end
+	player.CharacterAdded:Connect(resync)
+	player:GetAttributeChangedSignal("Role"):Connect(resync)
+	resync()
+end
+Players.PlayerAdded:Connect(onPlayer)
+for _, player in ipairs(Players:GetPlayers()) do
+	onPlayer(player)
+end
+Players.PlayerRemoving:Connect(function(player)
+	inventory[player] = nil
+	lastUse[player] = nil
+	lastCall[player] = nil
+end)
+]==]
+
 SOURCES.Client = [==[
--- CaveHunt client: role button, flashlight controls, the cave mood, flickering lights.
+-- CaveHunt client: role + shop buttons, flashlight controls, the cave mood, flickering lights.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
@@ -667,7 +1287,8 @@ task.spawn(function()
 	end)
 end)
 
--- messages at the top of the screen ("Bob is calling you!") and the roar's screen shake
+-- messages at the top of the screen ("Bob is calling you!"), the screen shake (the monster's
+-- roar, an air horn) and the monster seeing a hider someone snitched on
 task.spawn(function()
 	local notify = ReplicatedStorage:WaitForChild("CaveHunt_Notify", 30)
 	local shake = ReplicatedStorage:WaitForChild("CaveHunt_Shake", 30)
@@ -705,8 +1326,8 @@ task.spawn(function()
 		end)
 	end
 	notify.OnClientEvent:Connect(show)
-	shake.OnClientEvent:Connect(function()
-		show("The monster roared nearby!")
+	shake.OnClientEvent:Connect(function(message)
+		show(message or "The monster roared nearby!")
 		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		if not humanoid then
 			return
@@ -718,6 +1339,219 @@ task.spawn(function()
 		end
 		humanoid.CameraOffset = Vector3.new()
 	end)
+	local reveal = ReplicatedStorage:WaitForChild("CaveHunt_Reveal", 30)
+	if reveal then
+		reveal.OnClientEvent:Connect(function(target, seconds, message)
+			if message then
+				show(message)
+			end
+			if typeof(target) ~= "Instance" or not target.Parent then
+				return
+			end
+			local h = Instance.new("Highlight")
+			h.FillColor = Color3.fromRGB(255, 150, 30)
+			h.OutlineColor = Color3.fromRGB(255, 220, 120)
+			h.FillTransparency = 0.4
+			h.OutlineTransparency = 0
+			h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			h.Adornee = target
+			h.Parent = target
+			game:GetService("Debris"):AddItem(h, seconds or 5)
+		end)
+	end
+end)
+
+-- The shop: the "Shop" button under the role button (or B) opens it. Coins are on the
+-- leaderboard. Bought items go in your hotbar, and each use spends one.
+task.spawn(function()
+	local buy = ReplicatedStorage:WaitForChild("CaveHunt_Buy", 30)
+	local catalog = ReplicatedStorage:WaitForChild("CaveHunt_Shop", 30)
+	local stats = player:WaitForChild("leaderstats", 30)
+	local coins = stats and stats:WaitForChild("Coins", 30)
+	if not (buy and catalog and coins) then
+		return
+	end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "CaveHunt_ShopUI"
+	gui.ResetOnSpawn = false
+	gui.Parent = player:WaitForChild("PlayerGui")
+
+	local function round(obj, radius)
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, radius)
+		c.Parent = obj
+	end
+	local function make(className, parent, props)
+		local t = Instance.new(className)
+		t.BackgroundTransparency = 1
+		t.TextColor3 = Color3.fromRGB(235, 235, 240)
+		t.Font = Enum.Font.GothamBold
+		t.TextSize = 16
+		for k, v in pairs(props) do
+			t[k] = v
+		end
+		t.Parent = parent
+		return t
+	end
+
+	local open = make("TextButton", gui, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -16, 0, 64),
+		Size = UDim2.fromOffset(170, 36),
+		BackgroundTransparency = 0.15,
+		BackgroundColor3 = Color3.fromRGB(60, 46, 10),
+		TextColor3 = Color3.fromRGB(255, 225, 140),
+	})
+	round(open, 8)
+
+	local panel = Instance.new("Frame")
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.fromScale(0.5, 0.5)
+	panel.Size = UDim2.new(0, 460, 0.8, 0)
+	panel.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+	panel.BackgroundTransparency = 0.05
+	panel.Visible = false
+	panel.Parent = gui
+	round(panel, 12)
+	local limit = Instance.new("UISizeConstraint")
+	limit.MaxSize = Vector2.new(460, 600)
+	limit.Parent = panel
+	make("TextLabel", panel, {
+		Text = "Troll Shop",
+		TextSize = 22,
+		Position = UDim2.fromOffset(16, 10),
+		Size = UDim2.new(1, -170, 0, 30),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+	local wallet = make("TextLabel", panel, {
+		TextColor3 = Color3.fromRGB(255, 210, 90),
+		Position = UDim2.new(1, -156, 0, 10),
+		Size = UDim2.fromOffset(104, 30),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
+	local close = make("TextButton", panel, {
+		Text = "X",
+		Position = UDim2.new(1, -42, 0, 10),
+		Size = UDim2.fromOffset(30, 30),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(90, 30, 30),
+	})
+	round(close, 6)
+	local status = make("TextLabel", panel, {
+		Text = "",
+		Font = Enum.Font.Gotham,
+		TextSize = 14,
+		TextWrapped = true,
+		TextColor3 = Color3.fromRGB(190, 200, 215),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 16, 1, -8),
+		Size = UDim2.new(1, -32, 0, 30),
+	})
+	local list = Instance.new("ScrollingFrame")
+	list.Position = UDim2.fromOffset(12, 50)
+	list.Size = UDim2.new(1, -24, 1, -96)
+	list.BackgroundTransparency = 1
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 6
+	list.CanvasSize = UDim2.new()
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	list.Parent = panel
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 8)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = list
+
+	local rows = {}
+	local function refresh()
+		open.Text = ("Shop  \u{00B7}  %d coins"):format(coins.Value)
+		wallet.Text = ("%d coins"):format(coins.Value)
+		for _, r in ipairs(rows) do
+			local hidersOnly = r.who == "Hider" and isMonster()
+			local can = not hidersOnly and coins.Value >= r.price
+			r.button.Text = hidersOnly and "Hiders only" or ("%d coins"):format(r.price)
+			r.button.AutoButtonColor = can
+			r.button.BackgroundColor3 = can and Color3.fromRGB(46, 120, 60) or Color3.fromRGB(55, 55, 62)
+		end
+	end
+	local entries = catalog:GetChildren()
+	table.sort(entries, function(a, b)
+		return (a:GetAttribute("Order") or 99) < (b:GetAttribute("Order") or 99)
+	end)
+	for i, entry in ipairs(entries) do
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, -10, 0, 62)
+		row.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+		row.LayoutOrder = i
+		row.Parent = list
+		round(row, 8)
+		make("TextLabel", row, {
+			Text = entry:GetAttribute("Name") or entry.Name,
+			Position = UDim2.fromOffset(12, 6),
+			Size = UDim2.new(1, -136, 0, 20),
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		make("TextLabel", row, {
+			Text = entry:GetAttribute("Tip") or "",
+			Font = Enum.Font.Gotham,
+			TextSize = 13,
+			TextWrapped = true,
+			TextColor3 = Color3.fromRGB(170, 175, 190),
+			Position = UDim2.fromOffset(12, 26),
+			Size = UDim2.new(1, -136, 0, 32),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+		})
+		local button = make("TextButton", row, {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -10, 0.5, 0),
+			Size = UDim2.fromOffset(108, 36),
+			BackgroundTransparency = 0,
+		})
+		round(button, 6)
+		table.insert(rows, { button = button, price = entry:GetAttribute("Price") or 0, who = entry:GetAttribute("Who") or "Any" })
+		local waiting = false
+		button.Activated:Connect(function()
+			if waiting then
+				return
+			end
+			waiting = true
+			status.Text = "..."
+			local ok, _, message = pcall(buy.InvokeServer, buy, entry.Name)
+			status.Text = ok and tostring(message) or "The shop didn't answer. Try again."
+			waiting = false
+			refresh()
+		end)
+	end
+
+	local function setOpen(on)
+		panel.Visible = on
+		if on then
+			status.Text = "Bought items go in your hotbar. Each use spends one."
+			refresh()
+		end
+	end
+	open.Activated:Connect(function()
+		setOpen(not panel.Visible)
+	end)
+	close.Activated:Connect(function()
+		setOpen(false)
+	end)
+	coins.Changed:Connect(refresh)
+	player:GetAttributeChangedSignal("Role"):Connect(refresh)
+	ContextActionService:BindAction("CaveHunt_Shop", function(_, state)
+		if state == Enum.UserInputState.Begin then
+			setOpen(not panel.Visible)
+		end
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.KeyCode.B)
+	refresh()
+end)
+
+-- the coins lying around the cave spin slowly
+RunService.RenderStepped:Connect(function(dt)
+	for _, coin in ipairs(CollectionService:GetTagged("CaveCoin")) do
+		coin.CFrame *= CFrame.Angles(0, dt * 2, 0)
+	end
 end)
 
 -- Flashlight: F, the on-screen "Light" button, or L1 switches it on and off
@@ -883,19 +1717,35 @@ CollectionService:GetInstanceAddedSignal("Flicker"):Connect(flicker)
 -- puts it back; while it's recharging, its slot counts down the seconds.
 local ITEM_PREFIX = [==[
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 local tool = script.Parent
 local NAME = tool.Name
 local readyAt = 0
 
+-- the slot shows "Glowstick x3" for shop items you have several of, and counts down while recharging
+local function refreshName()
+	local name = NAME
+	local charges = tool:GetAttribute("Charges")
+	if charges and charges > 1 then
+		name = ("%s x%d"):format(name, charges)
+	end
+	if os.clock() < readyAt then
+		name = ("%s (%d)"):format(name, math.ceil(readyAt - os.clock()))
+	end
+	tool.Name = name
+end
+tool:GetAttributeChangedSignal("Charges"):Connect(refreshName)
+refreshName()
+
 local function cooldown(seconds)
 	readyAt = os.clock() + seconds
 	task.spawn(function()
 		while os.clock() < readyAt do
-			tool.Name = ("%s (%d)"):format(NAME, math.ceil(readyAt - os.clock()))
+			refreshName()
 			task.wait(0.25)
 		end
-		tool.Name = NAME
+		refreshName()
 	end)
 end
 
@@ -912,6 +1762,83 @@ local function onUse(use)
 			end
 		end)
 	end)
+end
+
+-- shop items: the server checks you still have one, does the effect and takes one away
+local function useItem(arg)
+	local remote = ReplicatedStorage:FindFirstChild("CaveHunt_UseItem")
+	if remote then
+		remote:FireServer(tool:GetAttribute("Item"), arg)
+	end
+end
+
+-- a little list of other players to pick from; onPick gets the one you click
+local function pickPlayer(title, wanted, onPick)
+	local playerGui = player:WaitForChild("PlayerGui")
+	local old = playerGui:FindFirstChild("CaveHunt_Picker")
+	if old then
+		old:Destroy()
+	end
+	local people = {}
+	for _, other in ipairs(Players:GetPlayers()) do
+		if other ~= player and wanted(other) then
+			table.insert(people, other)
+		end
+	end
+	local picker = Instance.new("ScreenGui")
+	picker.Name = "CaveHunt_Picker"
+	local frame = Instance.new("Frame")
+	frame.AnchorPoint = Vector2.new(0.5, 1)
+	frame.Position = UDim2.new(0.5, 0, 1, -110)
+	frame.Size = UDim2.fromOffset(240, 0)
+	frame.AutomaticSize = Enum.AutomaticSize.Y
+	frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+	frame.BackgroundTransparency = 0.1
+	frame.Parent = picker
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = frame
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 8), UDim.new(0, 8)
+	pad.Parent = frame
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = frame
+	local function row(text, color, order, onClick)
+		local b = Instance.new(onClick and "TextButton" or "TextLabel")
+		b.Size = UDim2.new(1, 0, 0, 34)
+		b.BackgroundColor3 = color
+		b.BackgroundTransparency = onClick and 0 or 1
+		b.TextColor3 = Color3.fromRGB(235, 235, 240)
+		b.Font = Enum.Font.GothamBold
+		b.TextSize = 16
+		b.Text = text
+		b.LayoutOrder = order
+		b.Parent = frame
+		if onClick then
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(0, 6)
+			c.Parent = b
+			b.Activated:Connect(onClick)
+		end
+	end
+	row(#people > 0 and title or "Nobody to pick right now", Color3.new(), 0)
+	for i, other in ipairs(people) do
+		row(other.DisplayName, Color3.fromRGB(40, 70, 120), i, function()
+			picker:Destroy()
+			onPick(other)
+		end)
+	end
+	row("Cancel", Color3.fromRGB(90, 30, 30), #people + 1, function()
+		picker:Destroy()
+	end)
+	picker.Parent = playerGui
+end
+
+local function otherHider(other)
+	return other:GetAttribute("Role") ~= "Monster"
 end
 ]==]
 
@@ -961,8 +1888,8 @@ onUse(function()
 		end
 	end
 	for _, spot in ipairs(CollectionService:GetTagged("HidingSpot")) do
-		if spot:GetAttribute("Occupied") then
-			glow(spot, Color3.fromRGB(255, 190, 40)) -- someone is in there
+		if spot:GetAttribute("Occupied") or spot:GetAttribute("FakeOccupied") then
+			glow(spot, Color3.fromRGB(255, 190, 40)) -- someone is in there (or a Fake Hider from the shop)
 		end
 	end
 	task.delay(4, function()
@@ -1045,76 +1972,96 @@ end)
 		name = "Phone",
 		tip = "Ring another hider's phone (8s)",
 		source = [==[
-local ring = game:GetService("ReplicatedStorage"):WaitForChild("CaveHunt_Ring")
-local picker
-local function close()
-	if picker then
-		picker:Destroy()
-		picker = nil
-	end
-end
+local ring = ReplicatedStorage:WaitForChild("CaveHunt_Ring")
 onUse(function()
-	close()
-	local people = {}
-	for _, other in ipairs(Players:GetPlayers()) do
-		if other ~= player and other:GetAttribute("Role") ~= "Monster" then
-			table.insert(people, other)
-		end
-	end
-	picker = Instance.new("ScreenGui")
-	picker.Name = "CaveHunt_Phone"
-	picker.ResetOnSpawn = false
-	local frame = Instance.new("Frame")
-	frame.AnchorPoint = Vector2.new(0.5, 1)
-	frame.Position = UDim2.new(0.5, 0, 1, -110)
-	frame.Size = UDim2.fromOffset(240, 0)
-	frame.AutomaticSize = Enum.AutomaticSize.Y
-	frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
-	frame.BackgroundTransparency = 0.1
-	frame.Parent = picker
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = frame
-	local pad = Instance.new("UIPadding")
-	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
-	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 8), UDim.new(0, 8)
-	pad.Parent = frame
-	local layout = Instance.new("UIListLayout")
-	layout.Padding = UDim.new(0, 6)
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Parent = frame
-	local function row(text, color, order, onClick)
-		local b = Instance.new(onClick and "TextButton" or "TextLabel")
-		b.Size = UDim2.new(1, 0, 0, 34)
-		b.BackgroundColor3 = color
-		b.BackgroundTransparency = onClick and 0 or 1
-		b.TextColor3 = Color3.fromRGB(235, 235, 240)
-		b.Font = Enum.Font.GothamBold
-		b.TextSize = 16
-		b.Text = text
-		b.LayoutOrder = order
-		b.Parent = frame
-		if onClick then
-			local c = Instance.new("UICorner")
-			c.CornerRadius = UDim.new(0, 6)
-			c.Parent = b
-			b.Activated:Connect(onClick)
-		end
-	end
-	row(#people > 0 and "Who do you want to call?" or "No one to call", Color3.new(), 0)
-	for i, other in ipairs(people) do
-		row(other.DisplayName, Color3.fromRGB(40, 70, 120), i, function()
-			ring:FireServer(other)
-			close()
-			cooldown(8)
-		end)
-	end
-	row("Hang up", Color3.fromRGB(90, 30, 30), #people + 1, close)
-	picker.Parent = player:WaitForChild("PlayerGui")
+	pickPlayer("Who do you want to call?", otherHider, function(other)
+		ring:FireServer(other)
+		cooldown(8)
+	end)
 end)
 ]==],
 	},
 }
+
+-- Shop items (troll items). Bought with coins in the shop; each use spends one. `key` is how the
+-- shop knows the item, `who` = "Hider" means the monster can't buy or use it.
+local USE_NOW = [==[
+onUse(function()
+	useItem()
+	cooldown(1)
+end)
+]==]
+local SHOP_ITEMS = {
+	{
+		key = "Snitch",
+		name = "Snitch",
+		price = 30,
+		who = "Hider",
+		tip = "Pick a hider: the monster sees them (or the spot they're hiding in) for 5s",
+		source = [==[
+onUse(function()
+	pickPlayer("Who do you want to snitch on?", otherHider, function(other)
+		useItem(other)
+		cooldown(1)
+	end)
+end)
+]==],
+	},
+	{
+		key = "Glowstick",
+		name = "Glowstick",
+		price = 10,
+		who = "Any",
+		tip = "Throw a green glowstick where you're looking. It lights the area for 25s",
+		source = [==[
+onUse(function()
+	useItem(workspace.CurrentCamera.CFrame.LookVector)
+	cooldown(1)
+end)
+]==],
+	},
+	{
+		key = "FakeNoise",
+		name = "Fake Noise",
+		price = 15,
+		who = "Any",
+		tip = "A phone rings where you're aiming for 5s. Works from inside a hiding spot",
+		source = [==[
+onUse(function(character)
+	local camera = workspace.CurrentCamera.CFrame
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	local hit = workspace:Raycast(camera.Position, camera.LookVector * 150, params)
+	useItem(hit and hit.Position - camera.LookVector * 2 or camera.Position + camera.LookVector * 60)
+	cooldown(1)
+end)
+]==],
+	},
+	{ key = "SpotLock", name = "Spot Lock", price = 20, who = "Hider", tip = "Jam the nearest hiding spot for 10s so nobody can get in", source = USE_NOW },
+	{
+		key = "Swap",
+		name = "Swap",
+		price = 35,
+		who = "Hider",
+		tip = "Pick a hider (not one who's hiding) and swap places with them",
+		source = [==[
+onUse(function()
+	pickPlayer("Who do you want to swap with?", otherHider, function(other)
+		useItem(other)
+		cooldown(1)
+	end)
+end)
+]==],
+	},
+	{ key = "Banana", name = "Banana Peel", price = 15, who = "Any", tip = "Drop a peel at your feet. The next person to step on it slips for 2s", source = USE_NOW },
+	{ key = "AirHorn", name = "Air Horn", price = 10, who = "Any", tip = "HONK. Shakes everyone within 60 studs, and the monster hears it from far away", source = USE_NOW },
+	{ key = "FakeHider", name = "Fake Hider", price = 20, who = "Hider", tip = "The nearest empty hiding spot shows up as taken in the monster's Sense for 60s", source = USE_NOW },
+}
+for i, item in ipairs(SHOP_ITEMS) do
+	item.order = i
+	table.insert(ITEMS, item)
+end
 
 local function run()
 	local ok, err = pcall(function()
@@ -1132,6 +2079,12 @@ local function run()
 			tool.ToolTip = item.tip
 			tool.RequiresHandle = false
 			tool.CanBeDropped = false
+			if item.key then -- sold in the shop
+				tool:SetAttribute("Item", item.key)
+				tool:SetAttribute("Price", item.price)
+				tool:SetAttribute("Who", item.who)
+				tool:SetAttribute("Order", item.order)
+			end
 			local s = Instance.new("LocalScript")
 			s.Name = "Use"
 			s.Source = ITEM_PREFIX .. item.source
@@ -1161,13 +2114,14 @@ local function run()
 		end
 		install(ServerScriptService, "Script", "CaveHunt_Players", SOURCES.Players)
 		install(ServerScriptService, "Script", "CaveHunt_Hiding", SOURCES.Hiding)
+		install(ServerScriptService, "Script", "CaveHunt_Shop", SOURCES.Shop)
 		install(playerScripts, "LocalScript", "CaveHunt_Client", SOURCES.Client)
 	end)
 	if not ok then
 		warn("[GameScripts] Something went wrong. Copy this message and send it to Claude:\n" .. tostring(err))
 		return false
 	end
-	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities (button in the top-right corner), and the cave mood. Press Play to try them.")
+	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities (button in the top-right corner), the troll shop (Shop button or B, coins on the leaderboard), and the cave mood. Press Play to try them.")
 	return true
 end
 

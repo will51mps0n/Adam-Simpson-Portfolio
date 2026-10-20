@@ -367,13 +367,15 @@ local function run(options)
 				else
 					local spot = choices[rng:NextInteger(1, #choices)]
 					local at, look = spot.pos, spot.look
+					local middle, tucked = spot.pos, nil
 					if spot.footprint >= job.footprint * 2 then
 						-- small model in a big spot: tuck it against the wall side of the spot and
 						-- keep the rest of the spot free for more models
 						local a = rng:NextNumber(-0.9, 0.9)
 						local back = -look
 						back = Vector3.new(back.X * math.cos(a) - back.Z * math.sin(a), 0, back.X * math.sin(a) + back.Z * math.cos(a))
-						at = spot.pos + back * ((spot.footprint - job.footprint) / 2)
+						tucked = back * ((spot.footprint - job.footprint) / 2)
+						at = spot.pos + tucked
 						spot.pos = spot.pos - back * ((job.footprint + 1) / 2)
 						spot.footprint -= job.footprint + 1
 					else
@@ -401,29 +403,47 @@ local function run(options)
 					-- middle of the room for hiding props, or a random way for decor
 					local pivot = clone:GetPivot()
 					local wantYaw = job.hiding and yawOf(look) or rng:NextNumber(0, math.pi * 2)
-					local turn = wantYaw - yawOf(pivot.LookVector)
-					clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
+					local turn = CFrame.Angles(0, wantYaw - yawOf(pivot.LookVector), 0) * pivot.Rotation
 
-					-- then slide it over the spot
-					local lo, hi = bounds(clone, true)
-					local center = (lo + hi) / 2
-					clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, 0, at.Z - center.Z))
-					lo, hi = bounds(clone, true)
-
-					-- and stand its visible bottom on the highest bit of floor under it, so no
-					-- part of it is ever below the floor
-					local floorY = at.Y
+					-- then slide it over the spot and find the highest bit of floor under it.
+					-- `flat` is false if the floor under it rises or drops more than a stud
+					-- (it's on the slope up to a wall) or there's rock right above it
 					local rayParams = RaycastParams.new()
 					rayParams.FilterType = Enum.RaycastFilterType.Include
 					rayParams.FilterDescendantsInstances = { workspace.Terrain }
-					for _, xz in ipairs({ { 0.5, 0.5 }, { 0.1, 0.1 }, { 0.9, 0.1 }, { 0.1, 0.9 }, { 0.9, 0.9 } }) do
-						local x = lo.X + (hi.X - lo.X) * xz[1]
-						local z = lo.Z + (hi.Z - lo.Z) * xz[2]
-						local hit = workspace:Raycast(Vector3.new(x, at.Y + 12, z), Vector3.new(0, -24, 0), rayParams)
-						if hit and math.abs(hit.Position.Y - at.Y) < 4 then
-							floorY = math.max(floorY, hit.Position.Y)
+					local function settle(pos)
+						clone:PivotTo(CFrame.new(pos) * turn)
+						local lo, hi = bounds(clone, true)
+						local center = (lo + hi) / 2
+						clone:PivotTo(clone:GetPivot() + Vector3.new(pos.X - center.X, 0, pos.Z - center.Z))
+						lo, hi = bounds(clone, true)
+						local floorY, flat = pos.Y, true
+						for _, xz in ipairs({ { 0.5, 0.5 }, { 0.1, 0.1 }, { 0.9, 0.1 }, { 0.1, 0.9 }, { 0.9, 0.9 } }) do
+							local x = lo.X + (hi.X - lo.X) * xz[1]
+							local z = lo.Z + (hi.Z - lo.Z) * xz[2]
+							local hit = workspace:Raycast(Vector3.new(x, pos.Y + 12, z), Vector3.new(0, -24, 0), rayParams)
+							if hit and math.abs(hit.Position.Y - pos.Y) < 4 then
+								floorY = math.max(floorY, hit.Position.Y)
+							end
+							flat = flat and hit ~= nil and math.abs(hit.Position.Y - pos.Y) <= 1
 						end
+						return lo, floorY, flat
 					end
+					local lo, floorY, flat = settle(at)
+					if tucked and not flat then
+						-- tucked up the slope to a wall: slide it back toward the middle of the spot
+						for _, t in ipairs({ 0.66, 0.33, 0 }) do
+							at = middle + tucked * t
+							lo, floorY, flat = settle(at)
+							if flat then
+								break
+							end
+						end
+						spot.footprint = 0 -- it may now cover the rest of the spot
+					end
+
+					-- and stand its visible bottom on the highest bit of floor under it, so no
+					-- part of it is ever below the floor
 					local lift = floorY - lo.Y + 0.02
 					if job.offset then -- a mesh that hung below its part on your Baseplate: keep that gap (a few studs at most)
 						local pivotLift = (at.Y + job.offset) - clone:GetPivot().Y
@@ -434,6 +454,7 @@ local function run(options)
 					clone:PivotTo(clone:GetPivot() + Vector3.new(0, lift, 0))
 
 					if job.hiding then
+						local hi
 						lo, hi = bounds(clone)
 						local function addPoint(name, pos)
 							if not clone:FindFirstChild(name, true) then

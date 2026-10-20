@@ -4,9 +4,9 @@ Studio scripts for an asymmetric hide-and-seek game: one player is the monster a
 
 | File | What it does |
 | --- | --- |
-| `CaveBuilder.lua` | Carves the cave out of terrain (4 rooms joined by tunnels) and adds a spawn, monster spawns, a few hiding spots, and lots of spots saved for your models. |
+| `CaveBuilder.lua` | Carves the cave out of terrain (4 rooms joined by tunnels) and adds a spawn, monster spawns, banks of lockers along the walls, and lots of spots saved for your models. |
 | `PlaceAssets.lua` | Takes **your** models (closets, hiding spots, minecarts, lights, big room, …) and fills the cave with copies. |
-| `GameScripts.lua` | Installs the gameplay: same-size hiders, flashlights, hiding, phones, the monster and its abilities, and the dark cave mood. |
+| `GameScripts.lua` | Installs the gameplay: same-size hiders, flashlights, hiding, phones, the monster and its abilities, coins and the troll shop, and the dark cave mood. |
 
 ## Quick start: one command does everything
 
@@ -46,7 +46,37 @@ Press **Play**. You spawn in Base Camp as a **hider**. The **Play as Monster** b
 
 **How hotbar items work:** pick one (its number key, or click its slot) and it's used straight away. While it recharges, its slot counts down the seconds.
 
-**Sounds:** the ringtone and the roar use sounds built into Roblox. To use your own, change `RINGTONE` / `ROAR_SOUND` at the top of `ServerScriptService.CaveHunt_Players` to any sound ID, e.g. `"rbxassetid://1234567"`.
+## Coins and the troll shop
+
+**Coins** show on the leaderboard (top right, next to your name). Everyone starts with **40**.
+- **Hiders:** +1 coin every 5 seconds while you're alive in the cave.
+- **Coin pickups:** about 10 glowing gold coins lie in front of random hiding spots. Walk into one for +5. New ones keep appearing.
+- **The monster:** +15 for catching a hider, +5 for pulling one out of a hiding spot. Coins stay with you when you switch back to hider.
+
+**The shop:** click the **Shop** button under the role button, or press **B**. Bought items go in your hotbar. Each use spends one, and buying the same thing again stacks it ("Glowstick x3"). Items stay in your hotbar after you die. The monster can only buy the items marked "anyone".
+
+| Item | Price | Who | What it does |
+| --- | --- | --- | --- |
+| **Snitch** | 30 | hiders | Pick a hider. The monster sees them highlighted through walls for 5 seconds (or the spot they're hiding in). They get warned. Works while you're hiding. |
+| **Glowstick** | 10 | anyone | Throws a green glowstick where you're looking. It lights up the area for 25 seconds. |
+| **Fake Noise** | 15 | anyone | A phone rings where you're aiming for 5 seconds, to send the monster the wrong way. Works while you're hiding. |
+| **Spot Lock** | 20 | hiders | Jams the nearest hiding spot for 10 seconds ("JAMMED" shows above it). Nobody can get in, but the monster can still search it. |
+| **Swap** | 35 | hiders | Pick a hider who isn't hiding, and you swap places. |
+| **Banana Peel** | 15 | anyone | Drops a peel at your feet. The next person to step on it (not you) sits down and can't move for 2 seconds. |
+| **Air Horn** | 10 | anyone | HONK. Shakes the screen of everyone within 60 studs, and the monster hears it from far away. |
+| **Fake Hider** | 20 | hiders | The nearest empty hiding spot shows up as taken in the monster's Sense for 60 seconds. If the monster searches it, they're told it was a decoy. |
+
+Except for Snitch and Fake Noise, items can't be used while you're hiding.
+
+**Changing prices:** the items are Tools in **ServerStorage → CaveHunt_Tools**. Select one and change its `Price` attribute in the Properties window. `Who` is `Hider` (hiders only) or `Any`. Running the command again resets them.
+
+**Changing the coin amounts:** see the top of `ServerScriptService.CaveHunt_Shop`: `START_COINS`, `INCOME`, `INCOME_EVERY`, `REWARDS`, `PICKUPS` and `PICKUP_VALUE`.
+
+**Sounds:** everything uses sounds built into Roblox. To use your own, change these to any sound ID, e.g. `"rbxassetid://1234567"`:
+- `ROAR_SOUND` at the top of `ServerScriptService.CaveHunt_Players`.
+- `RINGTONE`, `AIRHORN_SOUND` and `SLIP_SOUND` at the top of `ServerScriptService.CaveHunt_Shop`.
+
+The air horn is a built-in beep played low and loud, so it's the one most worth swapping for a real horn sound.
 
 ## What's in the cave
 
@@ -62,10 +92,13 @@ The cave is a block of rock (720 × 200 × 720 studs) in the middle of your Base
 - **GreatCavern**: the central hall. It has a roughly 88-stud open spot for your big room, 2 shacks, rock pillars, barricades, and a climbable scaffold with a barrel on top.
 - **OldMine**: timber supports, rails, mine carts you can hide in.
 - **CrystalGrotto**: dimly glowing crystals.
+- **Lockers:** about 25, in banks of 2–3. They stand with their backs against the rock and their doors facing the middle of the room: one bank in Base Camp, four in the Great Cavern, three in the Old Mine and two in the Crystal Grotto.
 - **Tunnels and nooks:** dead-end alcoves off the tunnels.
 - **Monster spawns:** at the far ends of the Great Cavern, Old Mine and Crystal Grotto, marked by a dim red glow.
 
-**Room for your props:** there are about 70 spots in the rooms, along the tunnels and in the nooks.
+**Room for your props:** there are about 65 spots in the rooms, along the tunnels and in the nooks.
+- **Tunnel spots** are sized to the real width of the tunnel at that point, measured up to head height, so nothing pokes into a wall that curves in.
+- **Small props tucked against a wall:** if one lands where the floor starts sloping up to the wall, it's slid back toward open floor.
 
 **The mood:**
 - **Lighting:** very few lights, all dim. The rock is darker and looks wetter.
@@ -130,12 +163,13 @@ These are CollectionService tags, so they work wherever the object is in the tre
 
 | Tag | On | Notes |
 | --- | --- | --- |
-| `HidingSpot` | Model | Has `HidePoint` (where the hider goes) and `ExitPoint` (where they come out). Attributes: `HideType`, `Occupied`. |
+| `HidingSpot` | Model | Has `HidePoint` (where the hider goes) and `ExitPoint` (where they come out). Attributes: `HideType`, `Occupied`, `OccupantId` (the UserId inside), `LockedUntil` (Spot Lock, server time), `FakeOccupied` (Fake Hider). |
 | `MonsterSpawn` | Part | Attributes: `Room`, `DistanceFromPlayerSpawn` |
 | `PlayerSpawn` | SpawnLocation | Base Camp |
 | `PropSpot` | Part | Attributes: `MaxFootprint`, `MaxHeight`, `Room` |
 | `CaveRoom` | Part | Invisible box around each room. Attribute: `RoomKind` |
 | `Flicker` | Light | Flickers every few seconds (handled by `CaveHunt_Client`) |
+| `CaveCoin` | Part | A coin pickup (spawned by `CaveHunt_Shop`) |
 
 | Player attribute | Meaning |
 | --- | --- |
@@ -143,7 +177,8 @@ These are CollectionService tags, so they work wherever the object is in the tre
 | `Hidden` | `true` while hiding |
 
 - **Knocking hiders out:** `ServerStorage.CaveHunt_KnockOut:Invoke(spotModel)` throws whoever is hiding in that spot out and returns that player.
-- **Hotbar items:** the templates live in `ServerStorage.CaveHunt_Tools`.
+- **Hotbar items:** the templates live in `ServerStorage.CaveHunt_Tools`. Shop items have the attributes `Item`, `Price`, `Who` and `Order`.
+- **Giving coins from your own scripts:** `ServerStorage.CaveHunt_Reward:Fire(player, "Catch")` (or `"Find"`) pays out that reward. Coins are `player.leaderstats.Coins`.
 - **Adding back other room types:** add a room with `kind = "Lair"` (monster lair) or `kind = "Maze"` (the Backrooms) to `ROOMS` in `CaveBuilder.lua`.
 
 ## Remove the cave completely

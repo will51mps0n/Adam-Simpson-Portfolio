@@ -740,9 +740,9 @@ local function run(options)
 			return finishHide(m, "Wardrobe", cf, CFrame.new(0, 3, 0.1), CFrame.new(0, 3, -d / 2 - 3), parent)
 		end
 
-		local function buildLocker(cf, parent)
+		local function buildLocker(cf, parent, color)
 			local m = newModel("Locker")
-			local col = pick({ C.locker, C.lockerAlt, C.metal })
+			local col = color or pick({ C.locker, C.lockerAlt, C.metal })
 			local w, h, d = 3.2, 8, 2.8
 			local midY = 0.3 + (h - 0.3) / 2
 			P(m, Vector3.new(w, 0.3, d), cf * CFrame.new(0, 0.15, 0), col, M.Metal).Name = "Base"
@@ -1107,11 +1107,81 @@ local function run(options)
 			return CFrame.lookAt(pos, pos + dir)
 		end
 
-		local function addHidingSpots(room, n, kinds)
-			for _ = 1, n do
-				tryPlace(room, 4.5, { rhoMin = 0.5, rhoMax = 0.88 }, function(p)
-					HIDE_BUILDERS[pick(kinds or HIDE_KINDS)](placeAt(room, p))
-				end)
+		-- How far the rock is from p (on the floor at height floorY) going along dir:
+		-- sideways rays at knee, waist and head height (and halfWidth to each side), so
+		-- something that fits this gap doesn't poke into a wall that curves in higher up.
+		local function wallGap(floorY, p, dir, halfWidth)
+			local base = snapY(W(Vector3.new(p.X, floorY, p.Z)))
+			local side = Vector3.new(-dir.Z, 0, dir.X) * halfWidth
+			local gap = math.huge
+			for s = -1, 1 do
+				for _, y in ipairs({ 1, 4, 7, 9 }) do
+					local from = base + side * s + Vector3.new(0, y, 0)
+					local ok, hit = pcall(function()
+						return workspace:Raycast(from, dir * 60, rayParams)
+					end)
+					if not (ok and hit) then
+						return nil -- no wall in reach (or the ray started inside rock)
+					end
+					gap = math.min(gap, (hit.Position - from):Dot(dir))
+				end
+			end
+			return gap
+		end
+
+		-- A bank of lockers standing side by side with their backs to the rock and their
+		-- doors facing the middle of the room.
+		local addLockerBank
+		do
+			local WIDTH, DEPTH = 3.4, 2.8
+			local function free(room, p, r) -- clear of walking lanes and everything already placed
+				local center = flat(room.pos)
+				for _, e in ipairs(room.entrances) do
+					if segDist(p, center, e) < LANE_HALF + r then
+						return false
+					end
+				end
+				for _, b in ipairs(room.blocks) do
+					if (p - b.p).Magnitude < b.r + r then
+						return false
+					end
+				end
+				return true
+			end
+			function addLockerBank(room, count)
+				local center = flat(room.pos)
+				for _ = 1, 40 do
+					local dir = randDir() -- from the middle of the room out to the wall
+					local along = Vector3.new(-dir.Z, 0, dir.X)
+					local reach = 1 / math.sqrt((dir.X / room.rx) ^ 2 + (dir.Z / room.rz) ^ 2) -- the room's radius this way
+					local spots, gaps, ok = {}, {}, true
+					for i = 1, count do
+						spots[i] = center + dir * reach * 0.45 + along * (i - (count + 1) / 2) * WIDTH
+						gaps[i] = wallGap(room.pos.Y, spots[i], dir, WIDTH / 2 - 0.2)
+						ok = ok and gaps[i] ~= nil -- no wall found that way: try another
+					end
+					for i = 1, ok and count or 0 do
+						-- each one is pushed back on its own, so the bank follows the curve of the wall
+						local p = spots[i] + dir * ((gaps[i] or 0) - DEPTH / 2 - 0.3) -- back panel just off the rock
+						local d = p - center
+						local rho = math.sqrt((d.X / room.rx) ^ 2 + (d.Z / room.rz) ^ 2)
+						if rho < 0.55 or rho > 1 or not free(room, p, 2) or not free(room, p - dir * 3.5, 2) then
+							ok = false
+							break
+						end
+						spots[i] = p
+					end
+					if ok then
+						local color = pick({ C.locker, C.lockerAlt, C.metal })
+						for _, p in ipairs(spots) do
+							reserve(room, p, 2.2)
+							reserve(room, p - dir * 3.5, 2) -- room to get in and out
+							buildLocker(placeAt(room, p, p - dir), nil, color)
+						end
+						return true
+					end
+				end
+				return false
 			end
 		end
 
@@ -1514,6 +1584,7 @@ local function run(options)
 				buildSign(placeAt(room, p), "BASE CAMP")
 			end)
 			addLanterns(room, 4, { full = true })
+			addLockerBank(room, 3)
 			addPropSpots(room, 6)
 			addClutter(room, 2)
 		end
@@ -1529,6 +1600,9 @@ local function run(options)
 			tryPlace(room, 10, { rhoMin = 0.35, rhoMax = 0.8 }, function(p)
 				buildScaffold(placeAt(room, p), true)
 			end)
+			for _, n in ipairs({ 3, 3, 2, 2 }) do
+				addLockerBank(room, n)
+			end
 			addPillars(room, 3, 6, 9)
 			addBarricades(room, 4)
 			addPropSpots(room, 22)
@@ -1551,12 +1625,14 @@ local function run(options)
 					buildMinecart(cf * CFrame.new(0, 0, rand(-3, 3)))
 				end)
 			end
+			for _, n in ipairs({ 3, 3, 2 }) do -- the miners' lockers
+				addLockerBank(room, n)
+			end
 			for _ = 1, 5 do
 				tryPlace(room, 6.5, { rhoMin = 0.68, rhoMax = 0.86 }, function(p)
 					buildMineSupport(placeAt(room, p))
 				end)
 			end
-			addHidingSpots(room, 1, { "Locker" })
 			addBarricades(room, 2)
 			addPropSpots(room, 12)
 			addLanterns(room, 2)
@@ -1569,6 +1645,8 @@ local function run(options)
 					buildCrystals(placeAt(room, p, p + randDir()), rand(1.6, 2.2), pick({ C.crystalA, C.crystalB }))
 				end)
 			end
+			addLockerBank(room, 2)
+			addLockerBank(room, 2)
 			addBarricades(room, 1)
 			addPropSpots(room, 12)
 			for _ = 1, 8 do
@@ -1646,10 +1724,17 @@ local function run(options)
 								end
 							end
 							if not nearNook and not insideAnyRoom(s.pos, 1.25) then
+								-- against one wall, sized to the real width there (tunnels are round, so
+								-- the walls lean in) and leaving the middle free to walk through
 								local tan = flat(t.samples[i + 1].pos - t.samples[i - 1].pos).Unit
-								local p = flat(s.pos) + Vector3.new(-tan.Z, 0, tan.X) * side * s.r * 0.45
-								local spotRoom = { name = t.name, pos = Vector3.new(p.X, s.pos.Y, p.Z) }
-								makePropSpot(spotRoom, p, 2 * math.min(s.r * 0.32, 4.5), s.r * 1.25, "Small", flat(s.pos))
+								local out = Vector3.new(-tan.Z, 0, tan.X) * side
+								local gap = wallGap(s.pos.Y, flat(s.pos), out, 3)
+								local r = gap and math.min(4.5, (gap - 1.5) / 2)
+								if r and r >= 2.5 then
+									local p = flat(s.pos) + out * (gap - 0.5 - r)
+									local spotRoom = { name = t.name, pos = Vector3.new(p.X, s.pos.Y, p.Z) }
+									makePropSpot(spotRoom, p, 2 * r, 9, "Small", flat(s.pos))
+								end
 								side = -side
 							end
 						end
