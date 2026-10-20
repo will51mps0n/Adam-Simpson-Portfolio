@@ -23,8 +23,8 @@ local RED = Color3.fromRGB(196, 58, 40)
 function PartyUI.start()
 	local gui = UI.screen("Party", 8)
 	local panel = Instance.new("Frame")
-	panel.AnchorPoint = Vector2.new(0, 0.5)
-	panel.Position = UDim2.new(0, 16, 0.5, 0)
+	panel.AnchorPoint = Vector2.new(1, 0.5)
+	panel.Position = UDim2.new(1, -16, 0.5, 0)
 	panel.Size = UDim2.fromOffset(300, 384)
 	panel.BackgroundColor3 = UI.PANEL
 	panel.BackgroundTransparency = 0.08
@@ -154,7 +154,7 @@ function PartyUI.start()
 			startButton.BackgroundColor3 = GREEN
 		end
 		waitingLabel.Visible = not leader
-		waitingLabel.Text = if countdown then "STARTING IN " .. tostring(countdown) else "Waiting for the leader to start.\nStep off the pad to leave."
+		waitingLabel.Text = if countdown then "STARTING IN " .. tostring(countdown) else "Waiting for the leader to start.\nWalk out of the room to leave."
 	end)
 end
 

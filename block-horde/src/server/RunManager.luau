@@ -95,7 +95,7 @@ local function reviveFallen()
 	for player, participant in RunState.participants do
 		if not participant.alive and player.Parent then
 			participant.alive = true
-			task.spawn(CharacterService.spawnAt, player, Arena.spawnFor(participant.slot))
+			task.spawn(CharacterService.spawn, player, Arena.spawnFor(participant.slot), true)
 			Announce:FireClient(player, "BACK IN THE FIGHT", "info")
 		end
 	end
@@ -277,7 +277,7 @@ function RunManager.begin(players: { Player }, roomId: string, difficulty: strin
 	RunState.publish()
 
 	for player, participant in RunState.participants do
-		task.spawn(CharacterService.spawnAt, player, Arena.spawnFor(participant.slot))
+		task.spawn(CharacterService.spawn, player, Arena.spawnFor(participant.slot), true)
 	end
 	announce("GET READY", "wave")
 	return true

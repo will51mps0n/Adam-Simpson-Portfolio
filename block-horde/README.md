@@ -21,18 +21,25 @@ haze and blur from the template are moved into `ServerStorage.BlockHordeRemoved`
 
 ## How a game goes
 
-- You spawn in the **lobby**. Walk onto one of the six glowing **party pads**.
-- The first player on a pad is the **leader**: pick the room, difficulty
-  (Beginner / Intermediate / Expert / Nightmare), party size (1-6) and
-  friends-only, then press **START**. Others join by stepping onto the pad.
-- In Studio the run plays right there in the arena. In the published game the
-  party is teleported to its own private server, and back to a lobby after.
+- You spawn in the **lobby**, a normal 3D Roblox hall where you are your own
+  avatar with the regular camera and controls. Six **party rooms** open off
+  the north wall; the sign over each door shows its room, difficulty and players.
+- Walk into an empty party room to start a party and become its **leader**:
+  pick the room, difficulty (Beginner / Intermediate / Expert / Nightmare),
+  party size (1-6) and friends-only, then press **START**. Others join by
+  walking in; walking out leaves.
+- After the countdown a loading screen appears and the party goes into the
+  top-down game as blocky heroes. In the published game that is the party's
+  own private server; in Studio it plays right there in the same server.
 - Waves never end. Every kill adds 1 to your multiplier (more for several at
   once); it drains if you stop killing. Reaching x5, x10, x15... unlocks the
   Uzi, Shotgun, Barrels, Grenades, upgrades, Mines, Rockets, Railgun, Fake
-  Walls and a Turret. When everyone is down you see the scores and go back.
+  Walls and a Turret. When everyone is down you see the scores, then return
+  to the lobby. High scores hang on the lobby walls.
 
 ## Controls
+
+In a game (the lobby uses Roblox's normal controls):
 
 | Scheme | Move | Aim | Fire |
 | --- | --- | --- | --- |

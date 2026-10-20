@@ -47,7 +47,7 @@ function Teleporter.playHere(players: { Player }, roomId: string, difficulty: st
 				CharacterService.reassignSlot(player)
 				local home = Teleporter.homeSpawn(player)
 				if home then
-					task.spawn(CharacterService.spawnAt, player, home)
+					task.spawn(CharacterService.spawn, player, home, false)
 				end
 			end
 		end

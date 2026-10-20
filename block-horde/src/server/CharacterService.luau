@@ -1,8 +1,9 @@
 --!strict
--- Spawns players and dresses them as blocky heroes: the Roblox avatar is
--- hidden and block parts are welded on top of it. Each player has a slot
--- (1-6) that picks their shirt color. Players outside a run respawn at their
--- home spawn (the lobby); players in a run stay down and spectate.
+-- Spawns players. In the lobby they are their own Roblox avatar with normal
+-- controls. In a run they get a standard-size body, hidden, with the blocky
+-- hero welded on top, and the game's own top-down controls. Each player has a
+-- slot (1-6) that picks their shirt color. Players outside a run respawn at
+-- their home spawn (the lobby); players in a run stay down and spectate.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -228,15 +229,25 @@ function CharacterService.reassignSlot(player: Player)
 	CharacterService.setSlot(player, takeFreeSlot())
 end
 
--- Puts the player at `cframe` with full health, spawning a new character if
--- they have none or are dead. Yields until done.
-function CharacterService.spawnAt(player: Player, cframe: CFrame)
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if not character or not humanoid or humanoid.Health <= 0 then
-		player:LoadCharacterAsync()
-		character = player.Character
+-- Gives the player a fresh character at `cframe`: their own avatar for the
+-- lobby, or the blocky hero for a run (`arena`). Yields until done.
+function CharacterService.spawn(player: Player, cframe: CFrame, arena: boolean)
+	if not player.Parent then
+		return
 	end
+	-- Roblox's own controls in the lobby; the game's top-down controls in a run.
+	player.DevComputerMovementMode = if arena then Enum.DevComputerMovementMode.Scriptable else Enum.DevComputerMovementMode.UserChoice
+	player.DevTouchMovementMode = if arena then Enum.DevTouchMovementMode.Scriptable else Enum.DevTouchMovementMode.UserChoice
+	if arena then
+		-- A plain default body, so every hero is the same size whatever the avatar.
+		local description = Instance.new("HumanoidDescription")
+		description.BodyTypeScale = 0
+		description.ProportionScale = 0
+		player:LoadCharacterWithHumanoidDescriptionAsync(description)
+	else
+		player:LoadCharacterAsync()
+	end
+	local character = player.Character
 	if not character or not player.Parent then
 		return
 	end
@@ -252,7 +263,15 @@ function CharacterService.spawnAt(player: Player, cframe: CFrame)
 end
 
 local function onCharacterAdded(player: Player, character: Model)
-	dress(player, character)
+	if RunState.isParticipant(player) then
+		dress(player, character)
+	else
+		for _, descendant in character:GetDescendants() do
+			if descendant:IsA("BasePart") then
+				descendant.CollisionGroup = WorldSetup.PLAYER_GROUP
+			end
+		end
+	end
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
 	humanoid.Died:Connect(function()
 		task.delay(0.15, setHeroVisible, character, false)
@@ -264,7 +283,7 @@ local function onCharacterAdded(player: Player, character: Model)
 			if player.Parent and player.Character == character and not RunState.isParticipant(player) then
 				local home = CharacterService.homeSpawn(player)
 				if home then
-					CharacterService.spawnAt(player, home)
+					CharacterService.spawn(player, home, false)
 				end
 			end
 		end)
@@ -281,7 +300,7 @@ local function onPlayerAdded(player: Player)
 	end
 	local home = CharacterService.homeSpawn(player)
 	if home then
-		CharacterService.spawnAt(player, home)
+		CharacterService.spawn(player, home, false)
 	end
 end
 

@@ -1,7 +1,9 @@
 --!strict
--- On-screen controls for phones and tablets: a thumbstick on the left half of
--- the screen to move and face, plus FIRE and SWAP (next weapon) buttons.
+-- On-screen controls for phones and tablets during a run: a thumbstick on the
+-- left half of the screen to move and face, plus FIRE and SWAP (next weapon)
+-- buttons. The lobby uses Roblox's normal touch controls instead.
 
+local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
 local Input = require(script.Parent.InputController)
@@ -117,13 +119,14 @@ function MobileControls.start()
 	end)
 
 	local function refresh()
-		gui.Enabled = Input.scheme == "Touch"
+		gui.Enabled = Input.scheme == "Touch" and Players.LocalPlayer:GetAttribute("InRun") == true
 		if not gui.Enabled then
 			releaseStick()
 			releaseFire()
 		end
 	end
 	Input.SchemeChanged:Connect(refresh)
+	Players.LocalPlayer:GetAttributeChangedSignal("InRun"):Connect(refresh)
 	refresh()
 end
 

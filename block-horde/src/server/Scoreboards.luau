@@ -1,5 +1,5 @@
 --!strict
--- Floating high score boards in the lobby, one per difficulty, each cycling
+-- High score boards on the lobby walls, one per difficulty, each cycling
 -- through the rooms. Data is fetched slowly in the background to stay inside
 -- Roblox's DataStore request budget.
 
@@ -46,21 +46,17 @@ local function render(board: Board)
 	end
 end
 
-function Scoreboards.start(anchors: { Vector3 }, parent: Instance)
-	for i, at in anchors do
+function Scoreboards.start(placements: { CFrame }, parent: Instance)
+	for i, placement in placements do
 		local difficulty = Config.DIFFICULTY_ORDER[i]
 		if not difficulty then
 			break
 		end
-		local gui = LobbyBuilder.sign(parent, at, 20, 12)
+		local gui = LobbyBuilder.sign(parent, placement.Position, placement.LookVector, 20, 13, Color3.fromRGB(26, 26, 34))
 		local frame = Instance.new("Frame")
 		frame.Size = UDim2.fromScale(1, 1)
-		frame.BackgroundColor3 = Color3.fromRGB(26, 26, 34)
-		frame.BackgroundTransparency = 0.25
+		frame.BackgroundTransparency = 1
 		frame.Parent = gui
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0.06, 0)
-		corner.Parent = frame
 		local function line(y: number, h: number, color: Color3): TextLabel
 			local text = Instance.new("TextLabel")
 			text.BackgroundTransparency = 1

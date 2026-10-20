@@ -43,7 +43,7 @@ else
 	CharacterService.homeSpawn = lobbySpawn
 	Teleporter.homeSpawn = lobbySpawn
 	PartyService.start(lobby.pads)
-	Scoreboards.start(lobby.boards, workspace:WaitForChild("Lobby"))
+	Scoreboards.start(lobby.boards, lobby.folder)
 end
 
 CharacterService.start() -- last, because it spawns players

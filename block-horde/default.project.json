@@ -14,13 +14,14 @@
     },
     "StarterPlayer": {
       "$properties": {
-        "LoadCharacterAppearance": false,
-        "CharacterJumpPower": 0,
-        "CharacterJumpHeight": 0,
-        "AutoJumpEnabled": false,
-        "EnableMouseLockOption": false,
-        "DevComputerMovementMode": "Scriptable",
-        "DevTouchMovementMode": "Scriptable"
+        "LoadCharacterAppearance": true,
+        "CharacterUseJumpPower": true,
+        "CharacterJumpPower": 50,
+        "CharacterJumpHeight": 7.2,
+        "AutoJumpEnabled": true,
+        "EnableMouseLockOption": true,
+        "DevComputerMovementMode": "UserChoice",
+        "DevTouchMovementMode": "UserChoice"
       },
       "StarterPlayerScripts": {
         "Client": {

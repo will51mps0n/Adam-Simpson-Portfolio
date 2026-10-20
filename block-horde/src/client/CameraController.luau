@@ -1,8 +1,8 @@
 --!strict
--- Overhead camera: high above the player, tilted a little to look north,
--- narrow field of view. Smooth follow, no zoom, no rotation. Shakes on
--- explosions. When you are down during a run it follows a living teammate
--- (Q / E to switch).
+-- In a run: the overhead camera, high above the player, tilted a little to
+-- look north, narrow field of view. Smooth follow, no zoom, no rotation.
+-- Shakes on explosions. When you are down it follows a living teammate
+-- (Q / E to switch). In the lobby: Roblox's normal third-person camera.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,7 +16,10 @@ local player = Players.LocalPlayer
 
 local CameraController = {}
 
+local LOBBY_FOV = 70
+
 local focus: Vector3? = nil
+local inLobbyMode = false
 local trauma = 0
 local spectateIndex = 1
 local spectating: Player? = nil
@@ -69,8 +72,35 @@ local function pickTarget(): BasePart?
 	return rootOf(mates[spectateIndex])
 end
 
+-- The lobby uses Roblox's own camera; a party's game server shows the arena
+-- from above even before your character arrives.
+local function useLobbyCamera(camera: Camera): boolean
+	local overhead = player:GetAttribute("InRun") == true or ReplicatedStorage:GetAttribute("ServerKind") == "Party"
+	if overhead then
+		inLobbyMode = false
+		return false
+	end
+	if not inLobbyMode then
+		inLobbyMode = true
+		focus = nil
+		trauma = 0
+		spectating = nil
+		camera.CameraType = Enum.CameraType.Custom
+		camera.FieldOfView = LOBBY_FOV
+	end
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if humanoid and camera.CameraSubject ~= humanoid then
+		camera.CameraSubject = humanoid
+	end
+	return true
+end
+
 local function update(dt: number)
 	local camera = workspace.CurrentCamera
+	if useLobbyCamera(camera) then
+		return
+	end
 	if camera.CameraType ~= Enum.CameraType.Scriptable then
 		camera.CameraType = Enum.CameraType.Scriptable
 	end
