@@ -1573,7 +1573,7 @@ local Snapshot = {}
 
 Snapshot.HEADER = 8
 Snapshot.ENTRY = 9
-Snapshot.MAX_PER_PACKET = 90
+Snapshot.MAX_PER_PACKET = 80 -- 8 + 80 * 9 = 728 bytes, safely under the limit
 
 local TAU = math.pi * 2
 
