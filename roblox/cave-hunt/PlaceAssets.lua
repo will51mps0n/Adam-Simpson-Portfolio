@@ -381,7 +381,7 @@ local function run(options)
 		end)
 
 		local placed, failed, errors, placedAsset = {}, {}, {}, {}
-		local againstWall = 0
+		local againstWall, ownHiding = 0, 0
 
 		-- Studio may not have applied the new cave's terrain yet when this runs straight after
 		-- CaveBuilder (in a live editing session terrain edits are queued), so floor rays could see
@@ -530,6 +530,17 @@ local function run(options)
 					clone:PivotTo(clone:GetPivot() + Vector3.new(0, lift, 0))
 
 					if job.hiding then
+						-- its own hiding scripts and prompts are switched off: hiding works through E (CaveHunt),
+						-- which makes you invisible and lets the monster find you
+						for _, d in ipairs(clone:GetDescendants()) do
+							if d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
+								d:Destroy()
+								ownHiding += 1
+							elseif d:IsA("BaseScript") and d.Enabled then
+								d.Enabled = false
+								ownHiding += 1
+							end
+						end
 						local hi
 						lo, hi = bounds(clone)
 						local function addPoint(name, pos)
@@ -575,6 +586,9 @@ local function run(options)
 		end
 		table.sort(names)
 		print(("[PlaceAssets] Put %d of your models in the cave: %s"):format(total, table.concat(names, ", ")))
+		if ownHiding > 0 then
+			print(("[PlaceAssets] Switched off %d scripts and prompts inside the copies of your hiding models, so hiding goes through E (your originals in CaveAssets are untouched)."):format(ownHiding))
+		end
 		if againstWall > 0 then
 			print(("[PlaceAssets] %d long models (like shelf rows) stand along the walls."):format(againstWall))
 		end

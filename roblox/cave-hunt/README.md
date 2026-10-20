@@ -18,6 +18,14 @@ local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.g
 
 It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=true` rebuilds the cave if one is already there. It also turns on **Allow HTTP Requests** for the place, which the download needs. Studio may freeze for a few seconds while the terrain is carved. In a live editing session the terrain can appear a moment after the Output says it's done.
 
+### Already changed the map? Update only the game scripts
+
+Use this one instead. It installs the gameplay scripts (`GameScripts`) and doesn't touch the cave or your props:
+
+```lua
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/LATEST/roblox/cave-hunt/" for _,f in ipairs({"GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
+```
+
 **Rebuilding wipes everything inside `Workspace.CaveSystem`.** Things you put anywhere else are kept: Workspace itself, folders, ServerStorage. If the new rock would bury something of yours, it's moved onto the top of the rock, and the Output tells you what moved.
 
 **If nothing seems to happen:** open the Output window (**Script** tab → **Output**) and run it again. Every step prints a line starting with `[CaveBuilder]`, `[PlaceAssets]` or `[GameScripts]`. If something fails, you get a message that starts with "Something went wrong". Copy that whole message and send it to Claude.
@@ -69,7 +77,8 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 **Hiders**
 - **Your character:** the plain blocky Roblox body at the standard size, with your own head, face, hair, hats, skin colors and clothes.
 - **Camera:** hiders are locked in first person, with a small dot in the middle of the screen instead of the mouse pointer.
-  - **Menus:** the pointer comes back while a menu is open: the shop (**B**), the Admin panel (**P**) and the phone list.
+  - **Menus:** the pointer comes back, free to click, while a menu is open: the shop (**B**), the Admin panel (**P**) and the phone list.
+- **Name tags:** nobody's name shows over their head, because it would show through walls.
 - **Flashlight:** **F**, or the item in slot 1, switches it on and off. The slot says **Light: ON** or **Light: OFF**, and it stays that way until you switch it again. It starts on.
   - **Tracking:** the beam follows where you look, up and down too, and other players see it sweep around.
   - **Range:** it reaches 60 studs (the most Roblox lights can).
@@ -77,6 +86,8 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
   - **Flashlight tools:** a flashlight Tool in StarterPack (like your Advanced Flashlight) is taken out of hiders' hotbars, because a held tool's beam can't follow where you look.
 - **Without a light:** the cave is very dark, but not pitch black. Rock and shapes are just visible (`CAVE_AMBIENT` at the top of `StarterPlayerScripts.CaveHunt_Client`).
 - **Hiding (E):** walk up to any hiding spot and press **E** to hide inside it. You go invisible, your tools are put away and your light switches off. Press **E** again to come out.
+  - **While hiding:** the camera goes to third person, looking at your spot from just outside its door, so you can watch the room.
+  - **Your own hiding models:** hiding models that came with their own hiding scripts or prompts (from the Toolbox) have those switched off, so all hiding goes through **E**. Otherwise players hidden that way stay visible and the monster can't find them.
 - **Phone (hotbar, 8s cooldown):** pick another hider from the list. Their phone rings for 4 seconds: everyone nearby hears it, and "RING RING" flashes above them with a blue glow, even if they're inside a closet. They get a message saying who's calling.
 
 **The monster**
@@ -84,6 +95,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Size:** 10 studs tall, twice a hider (`MONSTER_HEIGHT`). It fits through every tunnel and nook, but not the shack doors (7.5 studs) or doors in your own buildings that are sized for normal players. It can still punch through a doorway and search hiding spots through walls.
 - **Speed:** walks at 20 and sprints at 30, against the hiders' 16 and 24. It has more stamina than a hider.
 - **Punching:** **click** (R2 on a gamepad, the Hit button on a phone). It hits the closest hider in front of it, within reach (bigger monsters reach further), never through a wall. One punch catches them. Once a second.
+  - **Hiding spots:** hitting a hiding spot with someone inside catches them too. **E** ("Search") just pulls them out.
   - **What it looks like:** the monster's arm swings up by turning its shoulder joint. That works on any rig, with no animation file needed. Three red claw marks flash in front of it, with a swing sound and a thud on a hit.
   - **Your own punch animation:** if you make one in the Animation Editor, put its ID in `PUNCH_ANIMATION` at the top of `StarterPlayerScripts.CaveHunt_Client`. It plays instead of the shoulder swing.
 - **Camera:** stays pulled back far enough to always show the monster's body.

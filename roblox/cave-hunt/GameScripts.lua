@@ -192,6 +192,7 @@ local function setupHider(player, character)
 		humanoid:ApplyDescription(hiderLook(player))
 	end)
 	setSpeeds(character, HIDER_SPEEDS)
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None -- no name over your head (it shows through walls)
 	player.CameraMode = Enum.CameraMode.LockFirstPerson -- hiders see through their own eyes
 	player.CameraMinZoomDistance = 0.5
 	addFlashlight(character) -- after the new look, because that can replace the head
@@ -284,6 +285,10 @@ local function setupMonster(player, character)
 	clearTools(player) -- no flashlight or phone for the monster
 	giveTools(player, MONSTER_TOOLS)
 	setSpeeds(character, MONSTER_SPEEDS)
+	local monsterHumanoid = character:FindFirstChildOfClass("Humanoid")
+	if monsterHumanoid then
+		monsterHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
 	-- the camera stays far enough back to see the monster's whole body
 	player.CameraMode = Enum.CameraMode.Classic
 	player.CameraMinZoomDistance = math.max(8, character:GetExtentsSize().Y * 1.1)
@@ -291,7 +296,7 @@ end
 
 ------------------------------------------------------------------ the monster's punch
 -- the monster has to hit a hider (click, R2, or the Hit button) to catch them: the closest one in
--- front of it, within reach, that isn't hiding, and not through a wall
+-- front of it, within reach, and not through a wall. Hitting a hiding spot with someone in it gets them too
 local TweenService = game:GetService("TweenService")
 
 -- swing the monster's right arm by turning its shoulder joint, so it works on any rig (no animation needed)
@@ -378,26 +383,53 @@ punchRemote.OnServerEvent:Connect(function(player, animated)
 	clawMarks(root, reach, look)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	local best, bestDistance
+	local best, bestDistance, bestSpot
+	local function inReach(position, extra)
+		local offset = position - root.Position
+		local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+		local distance = flatOffset.Magnitude
+		local inFront = distance < 2 or flatOffset.Unit:Dot(look) > 0.3
+		return distance <= reach + extra and math.abs(offset.Y) < reach and inFront and (not best or distance < bestDistance), distance, offset
+	end
+	-- a hider inside a hiding spot: hitting the spot gets them
+	for _, spot in ipairs(CollectionService:GetTagged("HidingSpot")) do
+		local occupant = spot:GetAttribute("OccupantId") and Players:GetPlayerByUserId(spot:GetAttribute("OccupantId"))
+		local point = spot:FindFirstChild("HidePoint", true)
+		if occupant and point and occupant.Character then
+			local ok, distance, offset = inReach(point.Position, 2.5)
+			if ok then
+				params.FilterDescendantsInstances = { character, occupant.Character, spot }
+				if not workspace:Raycast(root.Position, offset, params) then
+					best, bestDistance, bestSpot = occupant, distance, spot
+				end
+			end
+		end
+	end
 	for _, other in ipairs(Players:GetPlayers()) do
 		local otherCharacter = other.Character
 		local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
 		local humanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
 		if other ~= player and other:GetAttribute("Role") == "Hider" and not other:GetAttribute("Hidden") and otherRoot and humanoid and humanoid.Health > 0 then
-			local offset = otherRoot.Position - root.Position
-			local flatOffset = Vector3.new(offset.X, 0, offset.Z)
-			local distance = flatOffset.Magnitude
-			local inFront = distance < 2 or flatOffset.Unit:Dot(look) > 0.3
-			if distance <= reach and math.abs(offset.Y) < reach and inFront and (not best or distance < bestDistance) then
+			local ok, distance, offset = inReach(otherRoot.Position, 0)
+			if ok then
 				params.FilterDescendantsInstances = { character, otherCharacter }
 				if not workspace:Raycast(root.Position, offset, params) then -- nothing in between
-					best, bestDistance = other, distance
+					best, bestDistance, bestSpot = other, distance, nil
 				end
 			end
 		end
 	end
 	if best then
-		local humanoid = best.Character:FindFirstChildOfClass("Humanoid")
+		if bestSpot then -- out of the hiding spot first (visible again), then caught
+			local knock = ServerStorage:FindFirstChild("CaveHunt_KnockOut")
+			if knock then
+				knock:Invoke(bestSpot)
+			end
+		end
+		local humanoid = best.Character and best.Character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then
+			return
+		end
 		playSound(best.Character.HumanoidRootPart, HIT_SOUND, 0.5, 2)
 		humanoid.Health = 0
 		local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
@@ -706,6 +738,10 @@ local function leave(player)
 	h.spot:SetAttribute("Occupied", false)
 	h.spot:SetAttribute("OccupantId", nil)
 	h.prompt.ActionText = "Hide"
+	if player:GetAttribute("Role") == "Hider" then -- back to first person
+		player.CameraMinZoomDistance = 0.5
+		player.CameraMode = Enum.CameraMode.LockFirstPerson
+	end
 	local character = player.Character
 	if character and character.Parent then
 		setHidden(character, false, h.saved)
@@ -748,14 +784,32 @@ local function hide(player, spot, prompt)
 	player:SetAttribute("Hidden", true)
 	spot:SetAttribute("Occupied", true)
 	spot:SetAttribute("OccupantId", player.UserId)
+	player.CameraMode = Enum.CameraMode.Classic -- third person while hiding (the client looks from outside the spot)
+	player.CameraMinZoomDistance = 8
 	character:PivotTo(point.CFrame)
 	root.Anchored = true
 	setHidden(character, true, saved)
 	prompt.ActionText = "Leave"
 end
 
+-- A hiding model's own hiding scripts and prompts (from the Toolbox, say) would hide players without
+-- this script knowing: they'd stay visible, keep their name tag, and the monster couldn't find them.
+local function removeOtherHiding(spot)
+	for _, d in ipairs(spot:GetDescendants()) do
+		if (d:IsA("ProximityPrompt") and not d:GetAttribute("CaveHunt")) or d:IsA("ClickDetector") then
+			d:Destroy()
+		elseif d:IsA("BaseScript") then
+			d.Enabled = false
+		end
+	end
+end
+
 local function setup(spot)
-	if not spot:IsA("Model") or spot:FindFirstChild("HidePrompt", true) then
+	if not spot:IsA("Model") then
+		return
+	end
+	removeOtherHiding(spot)
+	if spot:FindFirstChild("HidePrompt", true) then
 		return
 	end
 	local anchor = spot:FindFirstChild("HidePoint", true) or spot.PrimaryPart or spot:FindFirstChildWhichIsA("BasePart", true)
@@ -763,6 +817,7 @@ local function setup(spot)
 		return
 	end
 	local prompt = Instance.new("ProximityPrompt")
+	prompt:SetAttribute("CaveHunt", true)
 	prompt.Name = "HidePrompt"
 	prompt.ActionText = "Hide"
 	prompt.ObjectText = tostring(spot:GetAttribute("HideType") or spot.Name)
@@ -1945,11 +2000,14 @@ task.spawn(function()
 		BackgroundColor3 = Color3.fromRGB(235, 235, 235),
 	})
 	round(dot, 99)
-	RunService.RenderStepped:Connect(function()
+	RunService:BindToRenderStep("CaveHunt_Mouse", Enum.RenderPriority.Camera.Value + 1, function()
 		local firstPerson = player.CameraMode == Enum.CameraMode.LockFirstPerson and player.Character ~= nil
 		local menu = menusOpen.shop or menusOpen.admin or playerGui:FindFirstChild("CaveHunt_Picker") ~= nil
 		dot.Visible = firstPerson and not menu
 		UserInputService.MouseIconEnabled = not (firstPerson and not menu)
+		if menu then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default -- the camera locks it each frame; this runs right after
+		end
 		-- your own faint glow
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -2834,6 +2892,28 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+-- while you hide, the camera looks at your hiding spot from outside (just in front of its door)
+player:GetAttributeChangedSignal("Hidden"):Connect(function()
+	local camera = workspace.CurrentCamera
+	if player:GetAttribute("Hidden") then
+		for _ = 1, 10 do -- the spot's OccupantId can arrive a moment after Hidden
+			for _, spot in ipairs(CollectionService:GetTagged("HidingSpot")) do
+				local exit = spot:GetAttribute("OccupantId") == player.UserId and spot:FindFirstChild("ExitPoint", true)
+				if exit then
+					camera.CameraSubject = exit
+					return
+				end
+			end
+			task.wait(0.1)
+		end
+	else
+		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			camera.CameraSubject = humanoid
+		end
+	end
+end)
+
 -- the monster sees "Search" on hiding spots instead of "Hide"
 ProximityPromptService.PromptShown:Connect(function(prompt)
 	if prompt.Name == "HidePrompt" and isMonster() then
@@ -3417,10 +3497,31 @@ local function adoptMonster()
 	return ("Your monster: %s. Moved it from %s to ServerStorage so whoever is the monster plays as it. Wrong model? Drag it back, put the right one in ServerStorage named Monster, and run this again."):format(best.Name, from)
 end
 
+-- the hiding spots already in your cave: switch off their own hiding scripts and prompts
+-- (CaveHunt_Hiding does this too while the game runs)
+local function quietHidingSpots()
+	local n = 0
+	for _, spot in ipairs(game:GetService("CollectionService"):GetTagged("HidingSpot")) do
+		if spot:IsDescendantOf(workspace) then
+			for _, d in ipairs(spot:GetDescendants()) do
+				if d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
+					d:Destroy()
+					n += 1
+				elseif d:IsA("BaseScript") and d.Enabled then
+					d.Enabled = false
+					n += 1
+				end
+			end
+		end
+	end
+	return n
+end
+
 local function run()
-	local monsterNote = ""
+	local monsterNote, quieted = "", 0
 	local ok, err = pcall(function()
 		monsterNote = adoptMonster()
+		quieted = quietHidingSpots()
 		local ServerScriptService = game:GetService("ServerScriptService")
 		local ServerStorage = game:GetService("ServerStorage")
 		local items = ServerStorage:FindFirstChild("CaveHunt_Tools")
@@ -3480,6 +3581,9 @@ local function run()
 		return false
 	end
 	print("[GameScripts] " .. monsterNote)
+	if quieted > 0 then
+		print(("[GameScripts] Switched off %d scripts and prompts inside your hiding spots, so hiding goes through E."):format(quieted))
+	end
 	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities, rounds with spectating, admin commands (Admin button or ;help in chat), the troll shop (Shop button or B), and the cave mood. Press Play to try them.")
 	return true
 end
