@@ -12,24 +12,26 @@ Two Studio scripts for an asymmetric hide-and-seek game: one player is the monst
 Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/257dfed6891b706c53922a1b075e70b58dcd0ca4/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/a178508db66cad4fe898456d5bf4295e7dd31d00/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
 ```
 
-It builds the cave, then moves your models from Workspace into it. The two steps are explained below, and each one also has its own command if you only want to run that step (for example to reshuffle your models).
+It builds the cave, then moves your models from Workspace into it.
+
+**If nothing seems to happen:** open the Output window (**Script** tab → **Output**) and run the command again. Every step prints a line starting with `[CaveBuilder]` or `[PlaceAssets]`. If something fails, you get one message that starts with "Something went wrong". Copy that whole message and send it to Claude. The two steps are explained below, and each one also has its own command if you only want to run that step (for example to reshuffle your models).
 
 ## 1. Build the cave
 
 Paste this into the **Command Bar** (View → Command Bar), press Enter, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/257dfed6891b706c53922a1b075e70b58dcd0ca4/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/a178508db66cad4fe898456d5bf4295e7dd31d00/roblox/cave-hunt/CaveBuilder.lua",true) require(M)()
 ```
 
 It downloads `CaveBuilder.lua` from GitHub and runs it. It also turns on **Allow HTTP Requests** for the place, which the download needs.
 
 Studio freezes for a few seconds while the terrain is carved. That's normal. When it's done, the Output window prints a summary and the camera jumps to Base Camp.
 
-The cave sits **underground, around Y = -200, below your Baseplate**, so the map you already have up top isn't touched and can become the lobby later. To look around in Studio, select `Workspace.CaveSystem.Spawn.CaveSpawn` and press **F**.
+The cave is carved inside **a big block of rock just past the -Z edge of your Baseplate**, so the map you already have isn't touched and can become the lobby later. From outside you only see the rock. To look inside in Studio, select `Workspace.CaveSystem.Spawn.CaveSpawn` and press **F**, or just press **Play**: you spawn in Base Camp.
 
 **Options** go in the last brackets of the command, for example `require(M)({ SEED = 7 })` or `require(M)({ TUNNEL_SIZE = 1.3, DARK_LIGHTING = true })`. See [Settings](#settings) below.
 
@@ -40,7 +42,7 @@ The cave sits **underground, around Y = -200, below your Baseplate**, so the map
 After the cave is built, run this in the Command Bar, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/257dfed6891b706c53922a1b075e70b58dcd0ca4/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
+local H=game:GetService("HttpService") H.HttpEnabled=true local M=Instance.new("ModuleScript") M.Source=H:GetAsync("https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/a178508db66cad4fe898456d5bf4295e7dd31d00/roblox/cave-hunt/PlaceAssets.lua",true) require(M)()
 ```
 
 You don't need to set anything up first. **The first time it runs, it picks up the models already in your Workspace** (including ones inside folders) and moves them into **ServerStorage → CaveAssets**:
@@ -93,7 +95,7 @@ Pass these in the last brackets of the command, like `require(M)({ SEED = 7, OVE
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `ORIGIN` | `Vector3.new(0, -200, 0)` | Where the cave is built (keep Y a multiple of 4) |
+| `ORIGIN` | `Vector3.new(0, 64, -1450)` | Center of the cave (keep Y a multiple of 4). The rock block is 800 × 200 × 800 studs. |
 | `SEED` | `2024` | Change it to get a different random layout of tunnels and props |
 | `OVERWRITE` | `false` | Must be `true` to rebuild once a cave exists. **This wipes your edits inside the cave.** |
 | `TUNNEL_SIZE` | `1` | Tunnels are about 11–23 studs tall (nook passages about 9–12). Use `1.3` or more if the monster is big. |
@@ -127,7 +129,7 @@ These are CollectionService tags, so they work wherever the object is in the tre
 ## Remove the cave completely
 
 ```lua
-workspace.CaveSystem:Destroy() workspace.Terrain:FillBlock(CFrame.new(0, -164, 0), Vector3.new(808, 208, 808), Enum.Material.Air)
+workspace.CaveSystem:Destroy() workspace.Terrain:FillBlock(CFrame.new(0, 100, -1450), Vector3.new(808, 208, 808), Enum.Material.Air)
 ```
 
 (This assumes the default `ORIGIN`. Re-enable your old SpawnLocation by hand if it was disabled.)
