@@ -6,10 +6,13 @@
 	around the cave. Run CaveBuilder first.
 
 	YOUR MODELS: the first time it runs, it picks up the models sitting in
-	your Workspace and moves them into ServerStorage.CaveAssets, sorted into
-	  Hiding = things players can hide in (anything at least 5 studs tall
-	           and up to 30 studs across)
-	  Decor  = everything else, including big things like your big room
+	your Workspace (and in folders there) and moves them into
+	ServerStorage.CaveAssets, sorted into
+	  Hiding = names like Closet, Hiding Spot, Locker, Minecart, Crate,
+	           Shelf, Container (or a folder named like that). Unnamed
+	           models count if they're 5+ studs tall and under 30 across.
+	  Decor  = names like Light, Crystal, Fire, Lamp, plus everything
+	           else, including big things like your big room
 	It leaves alone: the Baseplate, SpawnLocations, the CaveSystem, and
 	anything with a Humanoid or "monster" in its name (your monster).
 	Copies of the models in those folders are what get put in the cave.
@@ -146,29 +149,48 @@ local function run(options)
 	folderFor("Hiding")
 	folderFor("Decor")
 
+	-- a model's (or its folder's) name usually says what it is
+	local HIDE_WORDS = { "hid", "closet", "locker", "wardrobe", "cabinet", "cart", "barrel", "crate", "container", "shelf", "shelves", "fridge", "dumpster" }
+	local DECOR_WORDS = { "light", "lamp", "torch", "lantern", "crystal", "fire", "decor", "sign", "plant" }
+	local function roleFromName(name)
+		name = name:lower()
+		for _, w in ipairs(HIDE_WORDS) do
+			if name:find(w, 1, true) then
+				return "Hiding"
+			end
+		end
+		for _, w in ipairs(DECOR_WORDS) do
+			if name:find(w, 1, true) then
+				return "Decor"
+			end
+		end
+		return nil
+	end
+
 	-- pick up the models already sitting in Workspace
 	if collectNow then
 		local found = {}
-		local function consider(inst)
+		local function consider(inst, folderRole)
 			if inst == cave or inst:IsA("Terrain") or inst:IsA("Camera") or inst:IsA("SpawnLocation") or inst.Name == "Baseplate" then
 				return
 			end
 			if inst:IsA("Folder") then
 				if inst.Name ~= "CaveAssets" then
 					for _, c in ipairs(inst:GetChildren()) do
-						consider(c)
+						consider(c, roleFromName(inst.Name) or folderRole)
 					end
 				end
 			elseif inst:IsA("Model") or inst:IsA("BasePart") then
-				table.insert(found, inst)
+				table.insert(found, { inst = inst, folderRole = folderRole })
 			end
 		end
 		for _, c in ipairs(workspace:GetChildren()) do
-			consider(c)
+			consider(c, nil)
 		end
 
 		local moved, leftAlone = { Hiding = {}, Decor = {} }, {}
-		for _, inst in ipairs(found) do
+		for _, entry in ipairs(found) do
+			local inst = entry.inst
 			local role = inst:GetAttribute("CaveRole")
 			local lo, hi = bounds(inst)
 			local size = hi - lo
@@ -188,7 +210,8 @@ local function run(options)
 				table.insert(leftAlone, inst.Name .. " (" .. why .. ")")
 			else
 				if role ~= "Hiding" and role ~= "Decor" then
-					role = (footprintOf(inst) <= CONFIG.BIG and size.Y >= 5) and "Hiding" or "Decor"
+					-- its name, then its folder's name, then its size (tall enough to stand in, not huge)
+					role = roleFromName(inst.Name) or entry.folderRole or ((footprintOf(inst) <= CONFIG.BIG and size.Y >= 5) and "Hiding" or "Decor")
 				end
 				inst.Parent = folderFor(role)
 				table.insert(moved[role], inst.Name)
@@ -203,28 +226,44 @@ local function run(options)
 		print("    Wrong folder? Drag it to the other one in ServerStorage.CaveAssets and run this again.")
 	end
 
-	-- what to place
+	-- what to place. Models with the same name count as one design (your 6 Closets are
+	-- 6 copies of a closet, not 6 designs x 3 copies each).
 	local jobs, skippedEmpty = {}, {}
 	local function collect(folder, hiding)
 		if not folder then
 			return
 		end
+		local groups, order = {}, {}
 		for _, asset in ipairs(folder:GetChildren()) do
 			if asset:IsA("Model") or asset:IsA("BasePart") then
 				local lo, hi = bounds(asset)
 				if lo.X == math.huge then
 					table.insert(skippedEmpty, asset.Name)
 				else
-					local size = hi - lo
-					local footprint = footprintOf(asset)
-					local count = asset:GetAttribute("Count")
-					if type(count) ~= "number" then
-						count = footprint > CONFIG.BIG and 1 or (hiding and CONFIG.HIDING_COPIES or CONFIG.DECOR_COPIES)
+					if not groups[asset.Name] then
+						groups[asset.Name] = {}
+						table.insert(order, asset.Name)
 					end
-					for _ = 1, count do
-						table.insert(jobs, { asset = asset, hiding = hiding, footprint = footprint, height = size.Y })
-					end
+					table.insert(groups[asset.Name], { asset = asset, footprint = footprintOf(asset), height = (hi - lo).Y })
 				end
+			end
+		end
+		for _, name in ipairs(order) do
+			local group = groups[name]
+			table.sort(group, function(a, b)
+				return a.footprint > b.footprint
+			end)
+			local count = group[1].asset:GetAttribute("Count")
+			if type(count) ~= "number" then
+				local default = hiding and CONFIG.HIDING_COPIES or CONFIG.DECOR_COPIES
+				if group[1].footprint > CONFIG.BIG then
+					default = 1
+				end
+				count = math.max(#group, default)
+			end
+			for copy = 1, count do
+				local t = group[(copy - 1) % #group + 1]
+				table.insert(jobs, { asset = t.asset, name = name, hiding = hiding, footprint = t.footprint, height = t.height, copy = copy })
 			end
 		end
 	end
@@ -238,14 +277,18 @@ local function run(options)
 	end
 
 	-- where it can go
-	local spots = {}
+	local spots, biggest = {}, 0
 	for _, s in ipairs(spotFolder:GetChildren()) do
 		if s:IsA("BasePart") then
-			table.insert(spots, {
-				part = s,
+			local floor = s.CFrame * CFrame.new(0, -s.Size.Y / 2, 0)
+			local spot = {
+				pos = floor.Position,
+				look = floor.LookVector, -- toward the middle of the room
 				footprint = s:GetAttribute("MaxFootprint") or 10,
 				height = s:GetAttribute("MaxHeight") or 15,
-			})
+			}
+			biggest = math.max(biggest, spot.footprint)
+			table.insert(spots, spot)
 		end
 	end
 
@@ -257,25 +300,48 @@ local function run(options)
 	out.Name = "PlacedAssets"
 	out.Parent = cave
 
-	-- biggest things first so they get the big spots
+	-- one copy of every model before any repeats; biggest first so they get the big spots
 	table.sort(jobs, function(a, b)
+		if a.copy ~= b.copy then
+			return a.copy < b.copy
+		end
 		return a.footprint > b.footprint
 	end)
 
 	local placed, failed = {}, {}
 	for _, job in ipairs(jobs) do
-		local fits = {}
+		-- free spots it fits in, preferring snug ones so the big spots stay free for big models
+		local fits, snug = {}, math.huge
 		for _, s in ipairs(spots) do
-			if not s.used and job.footprint <= s.footprint and job.height <= s.height then
+			if job.footprint <= s.footprint and job.height <= s.height then
 				table.insert(fits, s)
+				snug = math.min(snug, s.footprint)
 			end
 		end
-		if #fits == 0 then
-			failed[job.asset.Name] = failed[job.asset.Name] or { job = job, n = 0 }
-			failed[job.asset.Name].n += 1
+		local choices = {}
+		for _, s in ipairs(fits) do
+			if s.footprint <= snug * 1.6 + 4 then
+				table.insert(choices, s)
+			end
+		end
+		if #choices == 0 then
+			failed[job.name] = failed[job.name] or { job = job, n = 0 }
+			failed[job.name].n += 1
 		else
-			local spot = fits[rng:NextInteger(1, #fits)]
-			spot.used = true
+			local spot = choices[rng:NextInteger(1, #choices)]
+			local at, look = spot.pos, spot.look
+			if spot.footprint >= job.footprint * 2 then
+				-- small model in a big spot: tuck it against the wall side of the spot and
+				-- keep the rest of the spot free for more models
+				local a = rng:NextNumber(-0.9, 0.9)
+				local back = -look
+				back = Vector3.new(back.X * math.cos(a) - back.Z * math.sin(a), 0, back.X * math.sin(a) + back.Z * math.cos(a))
+				at = spot.pos + back * ((spot.footprint - job.footprint) / 2)
+				spot.pos = spot.pos - back * ((job.footprint + 1) / 2)
+				spot.footprint -= job.footprint + 1
+			else
+				spot.footprint = 0 -- used up
+			end
 
 			local clone = job.asset:Clone()
 			if clone:IsA("BasePart") then -- wrap loose parts so they can hold HidePoint/ExitPoint
@@ -291,16 +357,15 @@ local function run(options)
 
 			-- turn it (around world Y only, so it stays upright) so its front faces the
 			-- middle of the room for hiding props, or a random way for decor
-			local floor = spot.part.CFrame * CFrame.new(0, -spot.part.Size.Y / 2, 0)
 			local pivot = clone:GetPivot()
-			local wantYaw = job.hiding and yawOf(floor.LookVector) or rng:NextNumber(0, math.pi * 2)
+			local wantYaw = job.hiding and yawOf(look) or rng:NextNumber(0, math.pi * 2)
 			local turn = wantYaw - yawOf(pivot.LookVector)
-			clone:PivotTo(CFrame.new(floor.Position) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
+			clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
 
 			-- then slide it so its bottom-center sits on the spot
 			local lo, hi = bounds(clone)
 			local center = (lo + hi) / 2
-			clone:PivotTo(clone:GetPivot() + Vector3.new(floor.Position.X - center.X, floor.Position.Y - lo.Y - 0.05, floor.Position.Z - center.Z))
+			clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, at.Y - lo.Y - 0.05, at.Z - center.Z))
 
 			if job.hiding then
 				lo, hi = bounds(clone)
@@ -315,14 +380,14 @@ local function run(options)
 						p.CastShadow = false
 						p.Transparency = 1
 						p.Size = Vector3.new(1, 1, 1)
-						p.CFrame = CFrame.lookAt(pos, pos + floor.LookVector)
+						p.CFrame = CFrame.lookAt(pos, pos + look)
 						p.Parent = clone
 					end
 				end
 				local mid = (lo + hi) / 2
 				local halfDepth = math.max(hi.X - lo.X, hi.Z - lo.Z) / 2
 				addPoint("HidePoint", Vector3.new(mid.X, math.min(lo.Y + 3, mid.Y), mid.Z))
-				addPoint("ExitPoint", Vector3.new(mid.X, lo.Y + 3, mid.Z) + floor.LookVector * (halfDepth + 3))
+				addPoint("ExitPoint", Vector3.new(mid.X, lo.Y + 3, mid.Z) + look * (halfDepth + 3))
 				if clone:GetAttribute("HideType") == nil then
 					clone:SetAttribute("HideType", job.asset.Name)
 				end
@@ -330,19 +395,28 @@ local function run(options)
 				CollectionService:AddTag(clone, "HidingSpot")
 			end
 			clone.Parent = out
-			placed[job.asset.Name] = (placed[job.asset.Name] or 0) + 1
+			placed[job.name] = (placed[job.name] or 0) + 1
 		end
 	end
 
-	local biggest = 0
-	for _, s in ipairs(spots) do
-		biggest = math.max(biggest, s.footprint)
-	end
+	local total, extras, missing = 0, 0, 0
+	local names = {}
 	for name, count in pairs(placed) do
-		print(("[PlaceAssets] Placed %d x %s"):format(count, name))
+		total += count
+		table.insert(names, ("%s x%d"):format(name, count))
 	end
+	table.sort(names)
+	print(("[PlaceAssets] Put %d of your models in the cave: %s"):format(total, table.concat(names, ", ")))
 	for name, f in pairs(failed) do
-		warn(("[PlaceAssets] No free spot left for %d x '%s' (%d studs across, %d tall; the biggest spot in the cave is %d). Place those by hand, or lower its Count."):format(f.n, name, f.job.footprint, f.job.height, biggest))
+		if placed[name] then
+			extras += f.n
+		else
+			missing += 1
+			warn(("[PlaceAssets] '%s' didn't fit anywhere (%d studs across, %d tall; the biggest spot is %d). Place it by hand."):format(name, f.job.footprint, f.job.height, biggest))
+		end
+	end
+	if extras > 0 then
+		print(("[PlaceAssets] Skipped %d extra copies because the cave is full.%s"):format(extras, missing == 0 and " Every model is in at least once." or ""))
 	end
 	for _, name in ipairs(skippedEmpty) do
 		warn("[PlaceAssets] Skipped '" .. name .. "': it has no parts.")
