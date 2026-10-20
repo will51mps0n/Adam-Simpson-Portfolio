@@ -168,6 +168,107 @@ local function run(options)
 			return Vector3.new(math.cos(a), 0, math.sin(a))
 		end
 
+
+		------------------------------------------------------------------------
+		-- A record of every ball, block and cylinder of terrain this script writes, so it can
+		-- tell rock from air itself. Studio can apply terrain edits a little later (in a live
+		-- editing session they're queued), so rays and voxel reads during the build would
+		-- still see the old terrain. The last shape that covers a point decides what's there.
+		------------------------------------------------------------------------
+		local shapes = {}
+		local CELL = 32
+		local cellShapes = {}
+		local function cellKey(ix, iy, iz)
+			return ((ix + 512) * 1024 + (iy + 512)) * 1024 + (iz + 512)
+		end
+		local function addShape(shape, lo, hi)
+			table.insert(shapes, shape)
+			for ix = math.floor(lo.X / CELL), math.floor(hi.X / CELL) do
+				for iy = math.floor(lo.Y / CELL), math.floor(hi.Y / CELL) do
+					for iz = math.floor(lo.Z / CELL), math.floor(hi.Z / CELL) do
+						local key = cellKey(ix, iy, iz)
+						local list = cellShapes[key]
+						if not list then
+							list = {}
+							cellShapes[key] = list
+						end
+						table.insert(list, #shapes)
+					end
+				end
+			end
+		end
+		local function boxBounds(cf, half) -- world box around a rotated box
+			local lo, hi = Vector3.new(math.huge, math.huge, math.huge), Vector3.new(-math.huge, -math.huge, -math.huge)
+			for _, sx in ipairs({ -1, 1 }) do
+				for _, sy in ipairs({ -1, 1 }) do
+					for _, sz in ipairs({ -1, 1 }) do
+						local c = cf * Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)
+						lo = Vector3.new(math.min(lo.X, c.X), math.min(lo.Y, c.Y), math.min(lo.Z, c.Z))
+						hi = Vector3.new(math.max(hi.X, c.X), math.max(hi.Y, c.Y), math.max(hi.Z, c.Z))
+					end
+				end
+			end
+			return lo, hi
+		end
+		local function solidMaterial(mat)
+			return mat ~= AIR and mat ~= M.Water
+		end
+		local function fillBall(center, r, mat)
+			Terrain:FillBall(center, r, mat)
+			addShape({ kind = "ball", c = center, r2 = r * r, solid = solidMaterial(mat) }, center - Vector3.new(r, r, r), center + Vector3.new(r, r, r))
+		end
+		local function fillBlock(cf, size, mat)
+			Terrain:FillBlock(cf, size, mat)
+			local lo, hi = boxBounds(cf, size / 2)
+			addShape({ kind = "block", cf = cf, half = size / 2, solid = solidMaterial(mat) }, lo, hi)
+		end
+		local function fillCylinder(cf, height, radius, mat)
+			Terrain:FillCylinder(cf, height, radius, mat)
+			local lo, hi = boxBounds(cf, Vector3.new(radius, height / 2, radius))
+			addShape({ kind = "cylinder", cf = cf, halfH = height / 2, r2 = radius * radius, solid = solidMaterial(mat) }, lo, hi)
+		end
+		local function isRock(p) -- world position
+			local list = cellShapes[cellKey(math.floor(p.X / CELL), math.floor(p.Y / CELL), math.floor(p.Z / CELL))]
+			if not list then
+				return false
+			end
+			for i = #list, 1, -1 do
+				local sh = shapes[list[i]]
+				local inside
+				if sh.kind == "ball" then
+					local d = p - sh.c
+					inside = d.X * d.X + d.Y * d.Y + d.Z * d.Z <= sh.r2
+				elseif sh.kind == "block" then
+					local l = sh.cf:PointToObjectSpace(p)
+					inside = math.abs(l.X) <= sh.half.X and math.abs(l.Y) <= sh.half.Y and math.abs(l.Z) <= sh.half.Z
+				else
+					local l = sh.cf:PointToObjectSpace(p)
+					inside = math.abs(l.Y) <= sh.halfH and l.X * l.X + l.Z * l.Z <= sh.r2
+				end
+				if inside then
+					return sh.solid
+				end
+			end
+			return false
+		end
+		-- the floor height at x/z (cave-local), searching a few studs around aroundY;
+		-- nil if there's rock right above it or no floor in reach
+		local function floorAt(x, z, aroundY)
+			local lo, hi = aroundY - 7, aroundY + 5
+			if isRock(W(Vector3.new(x, hi, z))) or not isRock(W(Vector3.new(x, lo, z))) then
+				return nil
+			end
+			for _ = 1, 9 do
+				local mid = (lo + hi) / 2
+				if isRock(W(Vector3.new(x, mid, z))) then
+					lo = mid
+				else
+					hi = mid
+				end
+			end
+			return (lo + hi) / 2
+		end
+
 		local stats = { parts = 0, lights = 0, hiding = 0, monster = 0, props = 0 }
 
 		local root = Instance.new("Folder")
@@ -488,7 +589,7 @@ local function run(options)
 		local CHUNK = 240
 		for x = -HALF, HALF - CHUNK, CHUNK do
 			for z = -HALF, HALF - CHUNK, CHUNK do
-				Terrain:FillBlock(
+				fillBlock(
 					CFrame.new(W(Vector3.new(x + CHUNK / 2, (ROCK_TOP + ROCK_BOTTOM) / 2, z + CHUNK / 2))),
 					Vector3.new(CHUNK, ROCK_TOP - ROCK_BOTTOM, CHUNK),
 					ROCK
@@ -502,7 +603,7 @@ local function run(options)
 		local function carveRoom(room)
 			room.balls = {}
 			if room.kind == "Maze" then -- a plain box; the walls, floor and ceiling are parts
-				Terrain:FillBlock(CFrame.new(W(room.pos + Vector3.new(0, (room.h + 2) / 2, 0))), Vector3.new(room.rx * 2, room.h + 2, room.rz * 2), AIR)
+				fillBlock(CFrame.new(W(room.pos + Vector3.new(0, (room.h + 2) / 2, 0))), Vector3.new(room.rx * 2, room.h + 2, room.rz * 2), AIR)
 				return
 			end
 			local h = room.h
@@ -530,27 +631,27 @@ local function run(options)
 			for _, c in ipairs(centers) do
 				local pos = Vector3.new(room.pos.X + c.X, room.pos.Y + 0.4 * h, room.pos.Z + c.Z)
 				local r = R * rand(0.92, 1.1)
-				Terrain:FillBall(W(pos), r, AIR)
+				fillBall(W(pos), r, AIR)
 				table.insert(room.balls, { pos = pos, r = r })
 			end
 		end
 
 		local function floorRoom(room)
 			if room.kind == "Maze" then
-				Terrain:FillBlock(CFrame.new(W(room.pos - Vector3.new(0, 4, 0))), Vector3.new(room.rx * 2 + 8, 8, room.rz * 2 + 8), room.floor)
+				fillBlock(CFrame.new(W(room.pos - Vector3.new(0, 4, 0))), Vector3.new(room.rx * 2 + 8, 8, room.rz * 2 + 8), room.floor)
 				return
 			end
 			local lift = 0.4 * room.h
 			for _, b in ipairs(room.balls) do
 				local depth = b.r - lift + 4
 				local spread = math.sqrt(math.max(b.r ^ 2 - lift ^ 2, 0)) + 3
-				Terrain:FillCylinder(CFrame.new(W(Vector3.new(b.pos.X, room.pos.Y - depth / 2, b.pos.Z))), depth, spread, room.floor)
+				fillCylinder(CFrame.new(W(Vector3.new(b.pos.X, room.pos.Y - depth / 2, b.pos.Z))), depth, spread, room.floor)
 			end
 		end
 
 		local function carveTunnel(t)
 			for _, s in ipairs(t.samples) do
-				Terrain:FillBall(W(s.pos + Vector3.new(0, 0.5 * s.r, 0)), s.r, AIR)
+				fillBall(W(s.pos + Vector3.new(0, 0.5 * s.r, 0)), s.r, AIR)
 			end
 		end
 
@@ -561,7 +662,7 @@ local function run(options)
 				if tangent.Magnitude > 0.01 then
 					local thick = 0.5 * s.r + 4
 					local cf = CFrame.lookAt(W(s.pos), W(s.pos) + tangent) * CFrame.new(0, -thick / 2, 0)
-					Terrain:FillBlock(cf, Vector3.new(1.75 * s.r + 3, thick, tangent.Magnitude + 2), M.Ground)
+					fillBlock(cf, Vector3.new(1.75 * s.r + 3, thick, tangent.Magnitude + 2), M.Ground)
 				end
 			end
 		end
@@ -611,17 +712,11 @@ local function run(options)
 		------------------------------------------------------------------------
 		-- Part helpers
 		------------------------------------------------------------------------
-		local rayParams = RaycastParams.new()
-		rayParams.FilterType = Enum.RaycastFilterType.Include
-		rayParams.FilterDescendantsInstances = { Terrain }
-
-		-- nudge a floor position onto the visible terrain surface (if the ray finds it)
+		-- put a floor position (world) on the floor that was actually carved there
 		local function snapY(pos)
-			local ok, hit = pcall(function()
-				return workspace:Raycast(pos + Vector3.new(0, 4, 0), Vector3.new(0, -8, 0), rayParams)
-			end)
-			if ok and hit and math.abs(hit.Position.Y - pos.Y) < 1.5 then
-				return Vector3.new(pos.X, hit.Position.Y, pos.Z)
+			local y = floorAt(pos.X - O.X, pos.Z - O.Z, pos.Y - O.Y)
+			if y and math.abs(y - (pos.Y - O.Y)) < 3 then
+				return Vector3.new(pos.X, O.Y + y, pos.Z)
 			end
 			return pos
 		end
@@ -1063,13 +1158,7 @@ local function run(options)
 		end
 
 		-- Only flat floor: near the walls the floor curves up into the rock, and anything stood
-		-- there sinks into the slope. Rays straight down find the real floor height.
-		local function floorAt(x, z, aroundY) -- cave-local floor height there (nil if rock is right above it)
-			local ok, hit = pcall(function()
-				return workspace:Raycast(W(Vector3.new(x, aroundY + 5, z)), Vector3.new(0, -12, 0), rayParams)
-			end)
-			return ok and hit and hit.Position.Y - O.Y or nil
-		end
+		-- there sinks into the slope.
 		local function isFlat(room, p, radius)
 			local middle = floorAt(p.X, p.Z, room.pos.Y)
 			if not middle or math.abs(middle - room.pos.Y) > 1.5 then
@@ -1140,13 +1229,26 @@ local function run(options)
 			for s = -1, 1 do
 				for _, y in ipairs({ 0.5, 2, 4, 7, 9 }) do
 					local from = base + side * s + Vector3.new(0, y, 0)
-					local ok, hit = pcall(function()
-						return workspace:Raycast(from, dir * 60, rayParams)
-					end)
-					if not (ok and hit) then
-						return nil -- no wall in reach (or the ray started inside rock)
+					if isRock(from) then
+						return nil
 					end
-					gap = math.min(gap, (hit.Position - from):Dot(dir))
+					local d = 0
+					while d < 60 and not isRock(from + dir * (d + 2)) do
+						d += 2
+					end
+					if d >= 60 then
+						return nil -- no wall in reach
+					end
+					local a, b = d, d + 2 -- the rock starts somewhere in here
+					for _ = 1, 6 do
+						local m = (a + b) / 2
+						if isRock(from + dir * m) then
+							b = m
+						else
+							a = m
+						end
+					end
+					gap = math.min(gap, a)
 				end
 			end
 			return gap
@@ -1185,7 +1287,7 @@ local function run(options)
 					end
 					for i = 1, ok and count or 0 do
 						-- each one is pushed back on its own, so the bank follows the curve of the wall
-						local p = spots[i] + dir * ((gaps[i] or 0) - DEPTH / 2 - 0.5) -- back panel just off the rock
+						local p = spots[i] + dir * ((gaps[i] or 0) - DEPTH / 2 - 1) -- back panel a stud off the rock
 						local d = p - center
 						local rho = math.sqrt((d.X / room.rx) ^ 2 + (d.Z / room.rz) ^ 2)
 						if rho < 0.55 or rho > 1 or not free(room, p, 2) or not free(room, p - dir * 3.5, 2) then
@@ -1231,7 +1333,7 @@ local function run(options)
 			for _ = 1, n do
 				local r = rand(rMin, rMax)
 				tryPlace(room, r + 3, { reserve = r + 1, anyFloor = true }, function(p)
-					Terrain:FillBall(W(Vector3.new(p.X, room.pos.Y + r * 0.2, p.Z)), r, room.wall)
+					fillBall(W(Vector3.new(p.X, room.pos.Y + r * 0.2, p.Z)), r, room.wall)
 				end)
 			end
 		end
@@ -1241,7 +1343,7 @@ local function run(options)
 				tryPlace(room, 5.5, { anyFloor = true }, function(p)
 					local s = rand(0.8, 1.25)
 					for _, seg in ipairs({ { 1, 4 }, { 4.5, 3 }, { 7.5, 2.2 } }) do
-						Terrain:FillBall(W(Vector3.new(p.X + rand(-0.4, 0.4), room.pos.Y + seg[1] * s, p.Z + rand(-0.4, 0.4))), seg[2] * s, room.wall)
+						fillBall(W(Vector3.new(p.X + rand(-0.4, 0.4), room.pos.Y + seg[1] * s, p.Z + rand(-0.4, 0.4))), seg[2] * s, room.wall)
 					end
 				end)
 			end
@@ -1252,8 +1354,8 @@ local function run(options)
 				local r = rand(rMin, rMax)
 				tryPlace(room, r * 1.5 + 6, { rhoMax = 0.75, reserve = r * 1.5 + 1, anyFloor = true }, function(p)
 					local height = room.h + 30
-					Terrain:FillCylinder(CFrame.new(W(Vector3.new(p.X, room.pos.Y - 4 + height / 2, p.Z))), height, r, room.wall)
-					Terrain:FillBall(W(Vector3.new(p.X, room.pos.Y, p.Z)), r * 1.5, room.wall)
+					fillCylinder(CFrame.new(W(Vector3.new(p.X, room.pos.Y - 4 + height / 2, p.Z))), height, r, room.wall)
+					fillBall(W(Vector3.new(p.X, room.pos.Y, p.Z)), r * 1.5, room.wall)
 				end)
 			end
 		end
@@ -1277,7 +1379,7 @@ local function run(options)
 		local function addWallStrips(room, n, length, depth)
 			local center = flat(room.pos)
 			for _ = 1, n do
-				for _ = 1, 40 do
+				for _ = 1, 80 do
 					local dir = randDir()
 					local along = Vector3.new(-dir.Z, 0, dir.X)
 					local reach = 1 / math.sqrt((dir.X / room.rx) ^ 2 + (dir.Z / room.rz) ^ 2)
@@ -1286,7 +1388,7 @@ local function run(options)
 					for t = -0.5, 0.5, 0.25 do
 						gap = math.min(gap, wallGap(room.pos.Y, start + along * (t * length), dir, 0.5) or -1)
 					end
-					local middle = start + dir * (gap - depth / 2 - 0.4)
+					local middle = start + dir * (gap - depth / 2 - 1)
 					local d = middle - center
 					local rho = math.sqrt((d.X / room.rx) ^ 2 + (d.Z / room.rz) ^ 2)
 					local ok = gap > 0 and rho > 0.5 and rho < 1
@@ -1676,7 +1778,8 @@ local function run(options)
 			for _, n in ipairs({ 3, 3, 2, 2 }) do
 				addLockerBank(room, n)
 			end
-			addWallStrips(room, 4, 28, 7)
+			addWallStrips(room, 1, 56, 12) -- for really big ones, like warehouse shelves
+			addWallStrips(room, 3, 30, 9)
 			addPillars(room, 3, 6, 9)
 			addBarricades(room, 4)
 			addPropSpots(room, 22)
@@ -1857,11 +1960,7 @@ local function run(options)
 		-- Anything of yours in Workspace that the new rock now buries (say you placed it in a
 		-- tunnel that's gone after a rebuild) is moved onto the top of the rock.
 		local function buried(pos)
-			local ok, mats, occ = pcall(function()
-				local corner = Vector3.new(math.floor(pos.X / 4) * 4, math.floor(pos.Y / 4) * 4, math.floor(pos.Z / 4) * 4)
-				return Terrain:ReadVoxels(Region3.new(corner, corner + Vector3.new(4, 4, 4)), 4)
-			end)
-			return ok and mats[1][1][1] ~= AIR and mats[1][1][1] ~= M.Water and occ[1][1][1] > 0.5
+			return isRock(pos)
 		end
 		local unburied = {}
 		local function rescue(inst)

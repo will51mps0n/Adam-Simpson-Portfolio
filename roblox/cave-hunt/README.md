@@ -16,7 +16,7 @@ Paste this into the **Command Bar**, press Return, then **File → Save**:
 local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/0480ad89597b428f9334e3edcf0f99839c9e7d84/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
 ```
 
-It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=true` rebuilds the cave if one is already there. It also turns on **Allow HTTP Requests** for the place, which the download needs. Studio freezes for 10–30 seconds while the terrain is carved.
+It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=true` rebuilds the cave if one is already there. It also turns on **Allow HTTP Requests** for the place, which the download needs. Studio may freeze for a few seconds while the terrain is carved. In a live editing session the terrain can appear a moment after the Output says it's done.
 
 **Rebuilding wipes everything inside `Workspace.CaveSystem`.** Things you put anywhere else are kept: Workspace itself, folders, ServerStorage. If the new rock would bury something of yours, it's moved onto the top of the rock, and the Output tells you what moved.
 
@@ -68,8 +68,13 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 
 **Hiders**
 - **Your character:** the plain blocky Roblox body at the standard size, with your own head, face, hair, hats, skin colors and clothes.
-- **Flashlight (F):** switches your head flashlight on and off. If StarterPack has a Tool with "flash" in its name (like your Advanced Flashlight), that tool is used instead and the head flashlight stays off.
-- **Hiding (E):** walk up to any hiding spot and press **E** to hide inside it. You go invisible and your light switches off. Press **E** again to come out.
+- **Camera:** hiders are locked in first person.
+- **Flashlight:** **F**, or the **Flashlight** item in slot 1, switches it on and off. It starts on.
+  - **Tracking:** the beam follows where you look, up and down too, and other players see it sweep around.
+  - **Range:** it reaches 60 studs (the most Roblox lights can), with a soft glow around you so the ground at your feet shows.
+  - **Flashlight tools:** a flashlight Tool in StarterPack (like your Advanced Flashlight) is taken out of hiders' hotbars, because a held tool's beam can't follow where you look.
+- **Without a light:** the cave is very dark, but not pitch black. Rock and shapes are just visible (`CAVE_AMBIENT` at the top of `StarterPlayerScripts.CaveHunt_Client`).
+- **Hiding (E):** walk up to any hiding spot and press **E** to hide inside it. You go invisible, your tools are put away and your light switches off. Press **E** again to come out.
 - **Phone (hotbar, 8s cooldown):** pick another hider from the list. Their phone rings for 4 seconds: everyone nearby hears it, and "RING RING" flashes above them with a blue glow, even if they're inside a closet. They get a message saying who's calling.
 
 **The monster**
@@ -96,19 +101,26 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
   - **No model found:** the monster is your own character in black with red eyes.
 
 **Moving (everyone)**
-- **Sprint:** hold **Shift**. It uses stamina: the bar above the hotbar shows it, and it refills a second after you stop. Once it's empty, you have to wait until it's back to 20% before you can run again.
-- **Crouch / sneak:** press **C** (or Ctrl). Half speed, lower camera, and your steps are almost silent. Press it again to stand up.
+- **Sprint:** hold **Shift**. If you're crouching, it stands you up.
+  - **Stamina:** shown by the curved meter in the top-left corner. It refills a second after you stop.
+  - **Running out:** once it's empty, you have to wait until it's back to 20% before you can run again.
+- **Crouch / sneak:** press **C**. Half speed, lower camera, and your steps are almost silent. Press it again to stand up.
 - **Gamepad and phone:** L3 / B on a gamepad, Run / Crouch buttons on a phone.
 - **Crouch animation:** there isn't one built in, because Roblox only plays animations you own. Make one in the Animation Editor and put its ID in `CROUCH_ANIMATION` at the top of `StarterPlayerScripts.CaveHunt_Client`.
 
 | Speed | Hiders | Monster |
 | --- | --- | --- |
 | Walk | 16 | 20 |
-| Sprint (Shift) | 24 | 30 |
+| Sprint (Shift) | 26 | 30 |
 | Crouch (C) | 8 | 10 |
 | Stamina | runs out after about 5 s | runs out after about 7 s |
 
 Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` at the top of `ServerScriptService.CaveHunt_Players`, and stamina with `STAMINA_DRAIN` / `STAMINA_REGEN` in `CaveHunt_Client`. Shift lock is turned off, because Shift is sprint.
+
+**The HUD** (like Lethal Company)
+- **Top-left: your suit.** A small figure with a curved stamina meter round it. The meter turns red when you're nearly out. The figure crouches with you, and it shows HIDDEN, CROUCHING or RUNNING. It's red for the monster.
+- **Top: a compass** that turns with you (north is -Z).
+- **Top-right: your controls.** They change for hiders, the monster and spectators.
 
 **Footsteps:** everyone hears everyone's steps, coming from where they are.
 - **How loud:** walking can be heard about 70 studs away, sprinting about 150, crouching about 16.
@@ -171,7 +183,8 @@ The cave is a block of rock (720 × 200 × 720 studs) in the middle of your Base
 - **Monster spawns:** at the far ends of the Great Cavern, Old Mine and Crystal Grotto, marked by a dim red glow.
 
 **Room for your props:** there are about 60 spots in the rooms, along the tunnels and in the nooks, plus about 8 **wall strips**.
-- **Flat floor only:** every spot, and everything the builder puts down itself (tents, signs, lanterns), is checked with rays for flat floor, so nothing stands on the slope where the floor curves up into the wall.
+- **Flat floor only:** every spot, and everything the builder puts down itself (tents, signs, lanterns, lockers), is checked for flat floor, so nothing stands on the slope where the floor curves up into the wall.
+  - **No terrain reads:** the builder keeps its own record of every shape it carves and checks that, rather than reading the terrain back. Studio can apply terrain edits a moment later (it does in a live editing session), so anything read during the build would be the old cave.
 - **Wall strips:** long stretches of floor against the rock for long models like shelf rows. Their backs go to the wall and their fronts face the room.
 - **Tunnel spots** are sized to the real width of the tunnel at that point, measured up to head height, so nothing pokes into a wall that curves in.
 - **Small props tucked against a wall:** if one lands where the floor starts sloping up to the wall, it's slid back toward open floor.
@@ -179,7 +192,7 @@ The cave is a block of rock (720 × 200 × 720 studs) in the middle of your Base
 **The mood:**
 - **Lighting:** very few lights, all dim. The rock is darker and looks wetter.
 - **Dust:** floating dust only shows up in your flashlight beam.
-- **Inside the cave only:** no fog, and no sun, sky or ambient light. Hiders only see what a light shines on: flashlights, the lanterns at Base Camp, and glowing crystals. The monster sees with night vision. Everything goes back to normal when you leave the cave. In Studio's edit mode the cave stays visible so you can build.
+- **Inside the cave only:** no fog, and no sun or sky light, just a faint background light. Hiders mostly see what a light shines on: flashlights, the lanterns at Base Camp, and glowing crystals. The monster sees with night vision. Everything goes back to normal when you leave the cave. In Studio's edit mode the cave stays visible so you can build.
 
 ## Your models
 
@@ -193,6 +206,8 @@ After that first run it only uses CaveAssets. To add more props, drag them into 
 
 **How they're placed:**
 - **Long models** (at least twice as long as they are deep, like shelf rows) go along the walls on the wall strips first.
+- **Left out:** loose building pieces named just `Part`, `Ceiling`, `Floor`, `Wall` or `Roof`. They aren't props. Rename one in CaveAssets to put it in.
+- **Floor check:** if the cave's terrain wasn't there yet when the models were placed, PlaceAssets checks again a few seconds later and lifts anything that dips into the floor. The Output says what it did.
 - **Every model goes in at least once, biggest first.** Then extra copies go in while there's room: up to 6 of each hiding model, 4 of each decoration, and 1 of anything wider than 30 studs. Small props can share a spot.
 - **Height:** each model's *visible* bottom rests on the highest point of the floor under it, so nothing sinks into the floor. Invisible helper parts (hitboxes and the like) are ignored when working this out.
 - **Lights:** lights inside your models are dimmed to 35% to keep the cave dark (`ASSET_LIGHT_SCALE`).

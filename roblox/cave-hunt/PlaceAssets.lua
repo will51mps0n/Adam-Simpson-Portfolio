@@ -265,14 +265,18 @@ local function run(options)
 
 		-- what to place. Models with the same name count as one design (your 6 Closets are
 		-- 6 copies of a closet, not 6 designs x 3 copies each).
-		local jobs, skippedEmpty = {}, {}
+		local jobs, skippedEmpty, skippedPieces = {}, {}, {}
+		-- loose building pieces picked up from Workspace (a "Ceiling" or a plain "Part"), not props
+		local PIECES = { part = true, ceiling = true, floor = true, wall = true, roof = true, baseplate = true }
 		local function collect(folder, hiding)
 			if not folder then
 				return
 			end
 			local groups, order = {}, {}
 			for _, asset in ipairs(folder:GetChildren()) do
-				if asset:IsA("Model") or asset:IsA("BasePart") then
+				if (asset:IsA("Model") or asset:IsA("BasePart")) and PIECES[asset.Name:lower()] then
+					skippedPieces[asset.Name] = (skippedPieces[asset.Name] or 0) + 1
+				elseif asset:IsA("Model") or asset:IsA("BasePart") then
 					local lo, hi = bounds(asset)
 					if lo.X == math.huge then
 						table.insert(skippedEmpty, asset.Name)
@@ -378,6 +382,31 @@ local function run(options)
 
 		local placed, failed, errors, placedAsset = {}, {}, {}, {}
 		local againstWall = 0
+
+		-- Studio may not have applied the new cave's terrain yet when this runs straight after
+		-- CaveBuilder (in a live editing session terrain edits are queued), so floor rays could see
+		-- the old terrain. Only use them if they agree with the floor height of the spots.
+		local floorRays = RaycastParams.new()
+		floorRays.FilterType = Enum.RaycastFilterType.Include
+		floorRays.FilterDescendantsInstances = { workspace.Terrain }
+		local probes = {} -- a few spot floors to test the rays against
+		for i, spot in ipairs(spots) do
+			if i <= 12 then
+				table.insert(probes, spot.pos)
+			end
+		end
+		local function raysAgree()
+			local agree = 0
+			for _, pos in ipairs(probes) do
+				local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -12, 0), floorRays)
+				if hit and math.abs(hit.Position.Y - pos.Y) < 1 then
+					agree += 1
+				end
+			end
+			return #probes > 0 and agree >= #probes * 0.6
+		end
+		local raysWork = raysAgree()
+		local placedModels = {}
 		for _, job in ipairs(jobs) do
 			local ok, err = pcall(function()
 				-- free spots it fits in, preferring snug ones so the big spots stay free for big models
@@ -458,9 +487,6 @@ local function run(options)
 					-- then slide it over the spot and find the highest bit of floor under it.
 					-- `flat` is false if the floor under it rises or drops more than a stud
 					-- (it's on the slope up to a wall) or there's rock right above it
-					local rayParams = RaycastParams.new()
-					rayParams.FilterType = Enum.RaycastFilterType.Include
-					rayParams.FilterDescendantsInstances = { workspace.Terrain }
 					local function settle(pos)
 						clone:PivotTo(CFrame.new(pos) * turn)
 						local lo, hi = bounds(clone, true)
@@ -468,10 +494,10 @@ local function run(options)
 						clone:PivotTo(clone:GetPivot() + Vector3.new(pos.X - center.X, 0, pos.Z - center.Z))
 						lo, hi = bounds(clone, true)
 						local floorY, flat = pos.Y, true
-						for _, xz in ipairs({ { 0.5, 0.5 }, { 0.1, 0.1 }, { 0.9, 0.1 }, { 0.1, 0.9 }, { 0.9, 0.9 } }) do
+						for _, xz in ipairs(raysWork and { { 0.5, 0.5 }, { 0.1, 0.1 }, { 0.9, 0.1 }, { 0.1, 0.9 }, { 0.9, 0.9 } } or {}) do
 							local x = lo.X + (hi.X - lo.X) * xz[1]
 							local z = lo.Z + (hi.Z - lo.Z) * xz[2]
-							local hit = workspace:Raycast(Vector3.new(x, pos.Y + 12, z), Vector3.new(0, -24, 0), rayParams)
+							local hit = workspace:Raycast(Vector3.new(x, pos.Y + 12, z), Vector3.new(0, -24, 0), floorRays)
 							if hit and math.abs(hit.Position.Y - pos.Y) < 4 then
 								floorY = math.max(floorY, hit.Position.Y)
 							end
@@ -532,6 +558,7 @@ local function run(options)
 						CollectionService:AddTag(clone, "HidingSpot")
 					end
 					clone.Parent = out
+					table.insert(placedModels, clone)
 					placed[job.name] = (placed[job.name] or 0) + 1
 					placedAsset[job.asset] = true
 				end
@@ -570,6 +597,50 @@ local function run(options)
 		end
 		if #errors > 0 then
 			warn("[PlaceAssets] Some models couldn't be placed because of an error. Copy this message and send it to Claude:\n" .. table.concat(errors, "\n"))
+		end
+		local pieces = {}
+		for name, n in pairs(skippedPieces) do
+			table.insert(pieces, n > 1 and ("%s x%d"):format(name, n) or name)
+		end
+		if #pieces > 0 then
+			table.sort(pieces)
+			print(("[PlaceAssets] Left out %s: they look like building pieces, not props. Rename one in ServerStorage.CaveAssets to put it in."):format(table.concat(pieces, ", ")))
+		end
+		-- If the new cave's terrain wasn't there yet, check again once Studio has finished applying
+		-- it, and lift anything that dips into the real floor (nothing is ever lowered).
+		if not raysWork and task then
+			local tries = 0
+			local function lateCheck()
+				tries += 1
+				if not raysAgree() then
+					if tries < 8 then
+						task.delay(4, lateCheck)
+					end
+					return
+				end
+				local lifted = 0
+				for _, m in ipairs(placedModels) do
+					if m.Parent then
+						local lo, hi = bounds(m, true)
+						local floorY = -math.huge
+						for _, xz in ipairs({ { 0.5, 0.5 }, { 0.1, 0.1 }, { 0.9, 0.1 }, { 0.1, 0.9 }, { 0.9, 0.9 } }) do
+							local x, z = lo.X + (hi.X - lo.X) * xz[1], lo.Z + (hi.Z - lo.Z) * xz[2]
+							local hit = workspace:Raycast(Vector3.new(x, lo.Y + 5, z), Vector3.new(0, -10, 0), floorRays)
+							if hit then
+								floorY = math.max(floorY, hit.Position.Y)
+							end
+						end
+						if floorY > lo.Y + 0.05 then
+							m:PivotTo(m:GetPivot() + Vector3.new(0, floorY - lo.Y + 0.02, 0))
+							lifted += 1
+						end
+					end
+				end
+				print(("[PlaceAssets] Checked your models against the finished cave: %s"):format(
+					lifted > 0 and ("lifted %d that dipped into the floor."):format(lifted) or "they all stand on the floor."
+				))
+			end
+			task.delay(3, lateCheck)
 		end
 		for _, name in ipairs(skippedEmpty) do
 			warn("[PlaceAssets] Skipped '" .. name .. "': it has no parts.")

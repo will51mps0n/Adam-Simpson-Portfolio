@@ -7,11 +7,11 @@
 	  ServerScriptService.CaveHunt_Players
 	      * hiders get the plain blocky Roblox body (everyone the same size)
 	        with their own head, face, hair/hats, skin colours and clothes
-	      * hiders get a flashlight on their head (F to switch it). If
-	        StarterPack has a Tool with "flash" in its name, that's used
-	        instead and the head flashlight stays off
+	      * hiders see in first person, with a flashlight on their head that
+	        points where they look (F or the Flashlight hotbar item). A flashlight
+	        Tool from StarterPack is taken out of their hotbar (it can't track)
 	      * the monster: tall, fast, no flashlight, sees in the dark, and
-	        touching a hider kills them. If ServerStorage has a rigged model
+	        it has to punch a hider (click) to catch them. If ServerStorage has a rigged model
 	        called "Monster" (Humanoid + HumanoidRootPart) that's its body;
 	        otherwise your own character turns into a tall black creature
 	        with red eyes. It spawns at a random MonsterSpawn (a lair)
@@ -51,11 +51,10 @@ SOURCES.Players = [==[
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
-local StarterPack = game:GetService("StarterPack")
 local CollectionService = game:GetService("CollectionService")
 
 -- walking / sprinting (Shift, uses stamina) / crouching (C) speeds
-local HIDER_SPEEDS = { walk = 16, sprint = 24, crouch = 8 }
+local HIDER_SPEEDS = { walk = 16, sprint = 26, crouch = 8 }
 local MONSTER_SPEEDS = { walk = 20, sprint = 30, crouch = 10 }
 local MONSTER_HEIGHT = 10 -- studs (hiders are about 5). Taller won't fit the tunnels; shack doors are 7.5
 local MONSTER_SCALE = 1.9 -- the built-in monster (your own character in black) is this much bigger than a hider
@@ -85,7 +84,7 @@ local shakeRemote = remote("CaveHunt_Shake")
 local Debris = game:GetService("Debris")
 
 -- hotbar items: Tools that GameScripts keeps in ServerStorage.CaveHunt_Tools
-local HIDER_TOOLS = { "Phone" }
+local HIDER_TOOLS = { "Flashlight", "Phone" }
 local MONSTER_TOOLS = { "Leap", "Sense", "Scent", "Roar" }
 local function giveTools(player, names)
 	local templates = ServerStorage:FindFirstChild("CaveHunt_Tools")
@@ -113,14 +112,13 @@ local function clearTools(player) -- items bought in the shop are kept (CaveHunt
 	end
 end
 
--- a flashlight Tool in StarterPack replaces the head flashlight
-local usingTool = false
-for _, item in ipairs(StarterPack:GetChildren()) do
-	if item:IsA("Tool") and item.Name:lower():find("flash") then
-		usingTool = true
-	end
+-- Everyone uses the head flashlight, because its beam follows where you look. A flashlight Tool
+-- from StarterPack (like an Advanced Flashlight) can't do that, so it's taken out of hiders' hotbars.
+toggleLight:SetAttribute("UsingToolFlashlight", false)
+local aimRemote = remote("CaveHunt_Aim")
+local function isOtherFlashlight(tool)
+	return tool:IsA("Tool") and tool.Name:lower():find("flash") ~= nil and not tool:GetAttribute("CaveHuntTool")
 end
-toggleLight:SetAttribute("UsingToolFlashlight", usingTool)
 
 ------------------------------------------------------------------ hiders
 -- plain blocky body at the standard size, keeping the player's head, face,
@@ -155,7 +153,7 @@ end
 
 local function addFlashlight(character)
 	local head = character:FindFirstChild("Head")
-	if usingTool or not head or head:FindFirstChild("Flashlight") then
+	if not head or head:FindFirstChild("Flashlight") then
 		return
 	end
 	local mount = Instance.new("Attachment")
@@ -166,17 +164,17 @@ local function addFlashlight(character)
 	local beam = Instance.new("SpotLight")
 	beam.Name = "Beam"
 	beam.Face = Enum.NormalId.Front
-	beam.Angle = 45
-	beam.Range = 45
-	beam.Brightness = 2.5
+	beam.Angle = 55
+	beam.Range = 60 -- as far as Roblox lights go
+	beam.Brightness = 3
 	beam.Color = LIGHT
 	beam.Shadows = true
 	beam.Parent = mount
 
-	local spill = Instance.new("PointLight") -- a faint glow so you can see your own feet
+	local spill = Instance.new("PointLight") -- a soft glow around you, so the ground at your feet shows
 	spill.Name = "Spill"
-	spill.Range = 7
-	spill.Brightness = 0.25
+	spill.Range = 12
+	spill.Brightness = 0.6
 	spill.Color = LIGHT
 	spill.Parent = mount
 end
@@ -201,10 +199,30 @@ local function setupHider(player, character)
 		humanoid:ApplyDescription(hiderLook(player))
 	end)
 	setSpeeds(character, HIDER_SPEEDS)
+	player.CameraMode = Enum.CameraMode.LockFirstPerson -- hiders see through their own eyes
 	player.CameraMinZoomDistance = 0.5
 	addFlashlight(character) -- after the new look, because that can replace the head
+	for _, holder in ipairs({ player:FindFirstChildOfClass("Backpack"), character }) do
+		for _, tool in ipairs(holder and holder:GetChildren() or {}) do
+			if isOtherFlashlight(tool) then
+				tool:Destroy()
+			end
+		end
+	end
 	giveTools(player, HIDER_TOOLS)
 end
+
+-- where each hider is looking (sent ~10 times a second), so everyone sees their beam sweep around
+local lastAim = {}
+aimRemote.OnServerEvent:Connect(function(player, look)
+	local head = player.Character and player.Character:FindFirstChild("Head")
+	local mount = head and head:FindFirstChild("Flashlight")
+	if not mount or typeof(look) ~= "Vector3" or look.Magnitude < 0.5 or os.clock() - (lastAim[player] or 0) < 0.05 then
+		return
+	end
+	lastAim[player] = os.clock()
+	mount.CFrame = CFrame.lookAt(mount.Position, mount.Position + look.Unit)
+end)
 
 toggleLight.OnServerEvent:Connect(function(player)
 	local head = player.Character and player.Character:FindFirstChild("Head")
@@ -273,6 +291,7 @@ local function setupMonster(player, character)
 	giveTools(player, MONSTER_TOOLS)
 	setSpeeds(character, MONSTER_SPEEDS)
 	-- the camera stays far enough back to see the monster's whole body
+	player.CameraMode = Enum.CameraMode.Classic
 	player.CameraMinZoomDistance = math.max(8, character:GetExtentsSize().Y * 1.1)
 end
 
@@ -543,6 +562,7 @@ end
 
 local function becomeSpectator(player) -- no body; the client watches the others
 	player:SetAttribute("Role", "Spectator")
+	player.CameraMode = Enum.CameraMode.Classic
 	local character = player.Character
 	player.Character = nil
 	if character then
@@ -639,6 +659,7 @@ Players.PlayerRemoving:Connect(function(player)
 	converting[player] = nil
 	lastRoar[player] = nil
 	lastPunch[player] = nil
+	lastAim[player] = nil
 end)
 ]==]
 
@@ -727,6 +748,7 @@ local function hide(player, spot, prompt)
 		tell(player, "It's jammed! Try again in a few seconds.")
 		return
 	end
+	humanoid:UnequipTools() -- nothing in your hands (or shining) while you hide
 	local saved = {}
 	hiding[player] = { spot = spot, prompt = prompt, saved = saved }
 	player:SetAttribute("Hidden", true)
@@ -1913,7 +1935,7 @@ local function clock(seconds)
 end
 local cameraShake = Vector3.new() -- the roar / air horn shake, added to the camera by the movement code
 
--- Movement: hold Shift to sprint (it uses stamina), C to crouch and sneak (slow and quiet). The
+-- Movement: hold Shift to sprint (it uses stamina, and stands you up), C to crouch and sneak (slow and quiet). The
 -- speeds come from the server (attributes on your character); stamina is kept here. Phones get
 -- Run and Crouch buttons, gamepads use L3 and B.
 local STAMINA_DRAIN = { Hider = 20, Monster = 14 } -- per second while sprinting (100 is full)
@@ -1942,6 +1964,9 @@ local function setCrouch(on)
 end
 ContextActionService:BindActionAtPriority("CaveHunt_Sprint", function(_, state)
 	move.wantSprint = state == Enum.UserInputState.Begin
+	if move.wantSprint and move.crouching then
+		setCrouch(false) -- running stands you up
+	end
 	return Enum.ContextActionResult.Sink
 end, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonL3)
 ContextActionService:SetTitle("CaveHunt_Sprint", "Run")
@@ -1950,7 +1975,7 @@ ContextActionService:BindAction("CaveHunt_Crouch", function(_, state)
 		setCrouch(not move.crouching)
 	end
 	return Enum.ContextActionResult.Sink
-end, true, Enum.KeyCode.C, Enum.KeyCode.LeftControl, Enum.KeyCode.ButtonB)
+end, true, Enum.KeyCode.C, Enum.KeyCode.ButtonB)
 ContextActionService:SetTitle("CaveHunt_Crouch", "Crouch")
 player.CharacterAdded:Connect(function()
 	move.stamina = 100
@@ -1961,6 +1986,9 @@ RunService.Heartbeat:Connect(function(dt)
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	if not humanoid or humanoid.Health <= 0 then
 		return
+	end
+	if player:GetAttribute("Hidden") and character:FindFirstChildOfClass("Tool") then
+		humanoid:UnequipTools() -- nothing in your hands (or shining) while you hide
 	end
 	local role = isMonster() and "Monster" or "Hider"
 	local moving = humanoid.MoveDirection.Magnitude > 0.1
@@ -1992,34 +2020,115 @@ RunService.Heartbeat:Connect(function(dt)
 	humanoid.CameraOffset = move.offset + cameraShake
 end)
 
--- the stamina bar (only while it isn't full) and a CROUCHING tag, just above the hotbar
+-- The HUD, in the style of Lethal Company: your suit with a curved stamina meter round it in the
+-- top-left corner (the figure crouches with you), a compass across the top that turns with you,
+-- and the controls in the top-right corner.
 task.spawn(function()
-	local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), { Name = "CaveHunt_Stamina", ResetOnSpawn = false })
-	local back = make("Frame", gui, {
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -84),
-		Size = UDim2.fromOffset(220, 8),
-		BackgroundTransparency = 0.4,
-		BackgroundColor3 = Color3.fromRGB(10, 10, 14),
+	local ORANGE = Color3.fromRGB(255, 132, 34)
+	local DIM = Color3.fromRGB(120, 58, 16)
+	local RED = Color3.fromRGB(255, 64, 44)
+	local FONT = Enum.Font.RobotoMono
+	local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), { Name = "CaveHunt_HUD", ResetOnSpawn = false })
+
+	-- your suit
+	local suit = make("Frame", gui, { Position = UDim2.fromOffset(24, 70), Size = UDim2.fromOffset(120, 150) })
+	local figure = make("Frame", suit, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(66, 112), Size = UDim2.fromOffset(40, 80) })
+	local limbs = {}
+	for _, l in ipairs({
+		{ 0.3, 0, 0.4, 0.2, true }, -- head
+		{ 0.25, 0.22, 0.5, 0.38 }, -- body
+		{ 0.04, 0.24, 0.17, 0.34 }, -- arms
+		{ 0.79, 0.24, 0.17, 0.34 },
+		{ 0.27, 0.62, 0.2, 0.38 }, -- legs
+		{ 0.53, 0.62, 0.2, 0.38 },
+	}) do
+		local f = make("Frame", figure, { Position = UDim2.fromScale(l[1], l[2]), Size = UDim2.fromScale(l[3], l[4]), BackgroundTransparency = 0.1, BackgroundColor3 = ORANGE })
+		if l[5] then
+			round(f, 99)
+		end
+		table.insert(limbs, f)
+	end
+	-- the stamina meter: segments on a curve down the figure's left side, filling from the bottom
+	local SEGMENTS = 14
+	local segments = {}
+	for i = 1, SEGMENTS do
+		local a = math.rad(125 + (i - 1) / (SEGMENTS - 1) * 110)
+		table.insert(segments, make("Frame", suit, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(66 + math.cos(a) * 52, 72 + math.sin(a) * 52),
+			Size = UDim2.fromOffset(12, 5),
+			Rotation = math.deg(a),
+			BackgroundTransparency = 0,
+			BackgroundColor3 = ORANGE,
+		}))
+	end
+	local role = make("TextLabel", suit, { Text = "", Font = FONT, TextSize = 13, TextColor3 = ORANGE, Position = UDim2.fromOffset(28, 0), Size = UDim2.fromOffset(80, 16), TextXAlignment = Enum.TextXAlignment.Left })
+	local status = make("TextLabel", suit, { Text = "", Font = FONT, TextSize = 13, TextColor3 = ORANGE, Position = UDim2.fromOffset(28, 120), Size = UDim2.fromOffset(100, 16), TextXAlignment = Enum.TextXAlignment.Left })
+
+	-- the compass, under the round timer
+	local compass = make("Frame", gui, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 56), Size = UDim2.fromOffset(360, 30), ClipsDescendants = true })
+	local NAMES = { [0] = "N", [45] = "NE", [90] = "E", [135] = "SE", [180] = "S", [225] = "SW", [270] = "W", [315] = "NW" }
+	local marks = {}
+	for deg = 0, 345, 15 do
+		marks[deg] = make("TextLabel", compass, {
+			AnchorPoint = Vector2.new(0.5, 0),
+			Size = UDim2.fromOffset(32, 24),
+			Text = NAMES[deg] or "|",
+			TextSize = NAMES[deg] and 17 or 10,
+			Font = FONT,
+			TextColor3 = ORANGE,
+			TextTransparency = NAMES[deg] and 0 or 0.4,
+		})
+	end
+	make("Frame", compass, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0), Size = UDim2.fromOffset(2, 6), BackgroundTransparency = 0, BackgroundColor3 = ORANGE })
+
+	-- the controls
+	local controls = make("TextLabel", gui, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -18, 0, 108),
+		Size = UDim2.fromOffset(240, 160),
+		Font = FONT,
+		TextSize = 15,
+		TextColor3 = ORANGE,
+		TextStrokeTransparency = 0.75,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		LineHeight = 1.25,
 	})
-	round(back, 4)
-	local fill = make("Frame", back, { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(120, 220, 140) })
-	round(fill, 4)
-	local tag = make("TextLabel", gui, {
-		Text = "CROUCHING",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -96),
-		Size = UDim2.fromOffset(220, 18),
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(190, 200, 215),
-		Visible = false,
-	})
+	local CONTROLS = {
+		Hider = "Sprint : [Shift]\nCrouch : [C]\nFlashlight : [F]\nHide : [E]\nShop : [B]",
+		Monster = "Punch : [LMB]\nSprint : [Shift]\nCrouch : [C]\nSearch : [E]\nNight vision : [N]\nAbilities : [1-4]",
+		Spectator = "Next : [E]\nPrevious : [Q]",
+	}
+
 	while true do
-		local alive = player.Character ~= nil
-		back.Visible = alive and (move.stamina < 99.5 or move.sprinting)
-		fill.Size = UDim2.fromScale(move.stamina / 100, 1)
-		fill.BackgroundColor3 = move.stamina < 25 and Color3.fromRGB(230, 90, 70) or Color3.fromRGB(120, 220, 140)
-		tag.Visible = alive and move.crouching
+		local monster = isMonster()
+		local color = monster and RED or ORANGE
+		local r = player:GetAttribute("Role") or "Hider"
+		suit.Visible = player.Character ~= nil and r ~= "Spectator"
+		role.Text = monster and "MONSTER" or "HIDER"
+		role.TextColor3 = color
+		figure.Size = UDim2.fromOffset(40, move.crouching and 58 or 80)
+		for _, f in ipairs(limbs) do
+			f.BackgroundColor3 = color
+		end
+		for i, seg in ipairs(segments) do
+			local on = move.stamina / 100 >= (i - 0.5) / SEGMENTS
+			seg.BackgroundColor3 = on and (move.stamina < 25 and RED or color) or DIM
+			seg.BackgroundTransparency = on and 0.05 or 0.6
+		end
+		status.Text = player:GetAttribute("Hidden") and "HIDDEN" or (move.crouching and "CROUCHING" or (move.sprinting and "RUNNING" or ""))
+		status.TextColor3 = color
+		controls.Text = CONTROLS[r] or CONTROLS.Hider
+		controls.TextColor3 = color
+		local look = workspace.CurrentCamera.CFrame.LookVector
+		local heading = math.deg(math.atan2(look.X, -look.Z)) % 360 -- 0 = north (-Z)
+		for deg, m in pairs(marks) do
+			local delta = (deg - heading + 540) % 360 - 180
+			m.Position = UDim2.new(0.5, delta * 2, 0, 0)
+			m.Visible = math.abs(delta) < 92
+			m.TextColor3 = color
+		end
 		task.wait(0.05)
 	end
 end)
@@ -2650,14 +2759,14 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
--- Flashlight: F, the on-screen "Light" button, or L1 switches it on and off
+-- Flashlight: F, the on-screen "Light" button, L1, or the Flashlight hotbar item switches it on and off
 task.spawn(function()
 	local toggle = ReplicatedStorage:WaitForChild("CaveHunt_ToggleFlashlight", 30)
-	if not toggle or toggle:GetAttribute("UsingToolFlashlight") then
-		return -- a flashlight Tool from StarterPack is being used instead
+	if not toggle then
+		return
 	end
 	ContextActionService:BindAction("CaveHunt_Flashlight", function(_, state)
-		if toggle:GetAttribute("UsingToolFlashlight") then
+		if isMonster() then
 			return Enum.ContextActionResult.Pass
 		end
 		if state == Enum.UserInputState.Begin then
@@ -2668,13 +2777,20 @@ task.spawn(function()
 	ContextActionService:SetTitle("CaveHunt_Flashlight", "Light")
 end)
 
--- your own beam points where your camera looks (other players see it follow your head)
+-- your beam points where you look (up and down too); the server hears about it ~10 times a
+-- second so other players see your beam sweep around as well
+local aimRemote = ReplicatedStorage:WaitForChild("CaveHunt_Aim", 10)
+local lastSent, lastSentAt = Vector3.new(), 0
 RunService.RenderStepped:Connect(function()
 	local head = player.Character and player.Character:FindFirstChild("Head")
 	local mount = head and head:FindFirstChild("Flashlight")
 	if mount then
 		local look = head.CFrame:VectorToObjectSpace(workspace.CurrentCamera.CFrame.LookVector)
 		mount.CFrame = CFrame.lookAt(mount.Position, mount.Position + look)
+		if aimRemote and os.clock() - lastSentAt > 0.1 and (look - lastSent).Magnitude > 0.05 then
+			lastSent, lastSentAt = look, os.clock()
+			aimRemote:FireServer(look)
+		end
 	end
 end)
 
@@ -2685,8 +2801,8 @@ ProximityPromptService.PromptShown:Connect(function(prompt)
 	end
 end)
 
--- Cave mood while you're inside the cave's rock block: no fog, and no sun, sky or ambient light,
--- so hiders only see what a light shines on (flashlights, lanterns, glowing crystals).
+-- Cave mood while you're inside the cave's rock block: no fog, no sun or sky, and only a faint
+-- background light, so hiders mostly see what a light shines on (flashlights, lanterns, crystals).
 -- The monster gets green night vision instead (N switches it off and on).
 -- Everything goes back to normal when you leave.
 local grade = Instance.new("ColorCorrectionEffect")
@@ -2702,6 +2818,7 @@ bloom.Threshold = 0.85
 bloom.Enabled = false
 bloom.Parent = Lighting
 
+local CAVE_AMBIENT = Color3.fromRGB(16, 16, 22) -- how much hiders see without a light (0, 0, 0 = pitch black)
 local nightVision = true
 local saved
 local function setCaveMood(on)
@@ -2732,7 +2849,7 @@ local function setCaveMood(on)
 				FogEnd = Lighting.FogEnd,
 			},
 		}
-		local ambient = seeing and Color3.fromRGB(170, 190, 170) or (monster and Color3.fromRGB(30, 8, 8) or Color3.new(0, 0, 0))
+		local ambient = seeing and Color3.fromRGB(170, 190, 170) or (monster and Color3.fromRGB(30, 8, 8) or CAVE_AMBIENT)
 		Lighting.Ambient = ambient
 		Lighting.OutdoorAmbient = ambient
 		Lighting.Brightness = 0 -- the sun and moon would light the cave through the rock
@@ -3095,6 +3212,17 @@ end)
 ]==],
 	},
 	{
+		name = "Flashlight",
+		tip = "Switch your flashlight on or off (or press F)",
+		source = [==[
+local toggle = ReplicatedStorage:WaitForChild("CaveHunt_ToggleFlashlight")
+onUse(function()
+	toggle:FireServer()
+	cooldown(0.3)
+end)
+]==],
+	},
+	{
 		name = "Phone",
 		tip = "Ring another hider's phone (8s)",
 		source = [==[
@@ -3254,6 +3382,7 @@ local function run()
 			tool.ToolTip = item.tip
 			tool.RequiresHandle = false
 			tool.CanBeDropped = false
+			tool:SetAttribute("CaveHuntTool", true)
 			if item.key then -- sold in the shop
 				tool:SetAttribute("Item", item.key)
 				tool:SetAttribute("Price", item.price)
