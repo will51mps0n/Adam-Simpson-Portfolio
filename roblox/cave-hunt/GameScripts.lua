@@ -9,7 +9,10 @@
 	        with their own head, face, hair/hats, skin colours and clothes
 	      * hiders see in first person, with a flashlight on their head that
 	        points where they look (F or the Flashlight hotbar item). A flashlight
-	        Tool from StarterPack is taken out of their hotbar (it can't track)
+	        Tool from StarterPack is used instead, if you have one
+	      * your StarterPack tools go to the hiders. Guns (a Tool with an "Ammo"
+	        value, like a Luger) shoot with their own scripts: 10 hits kill the
+	        monster (each stuns it for a second) and a reload takes a minute
 	      * the monster: tall, fast, no flashlight, sees in the dark, and
 	        it has to punch a hider (click) to catch them. If ServerStorage has a rigged model
 	        called "Monster" (Humanoid + HumanoidRootPart) that's its body;
@@ -69,6 +72,14 @@ local CRY = { cooldown = 75, range = 260, lightsOut = 35, shake = 9, sound = 10 
 -- C makes the monster shrink to this much of its size and move at these speeds; C again grows it back
 local SHRINK_SCALE = 0.5
 local SHRUNK_SPEEDS = { walk = 26, sprint = 36, crouch = 26 }
+-- Your guns (like the Luger in StarterPack) shoot with their own scripts. Whatever damage a gun does,
+-- each hit on the monster counts as one shot: SHOTS_TO_KILL shots kill it (it never heals), and each
+-- one stuns it for STUN_TIME seconds. A gun (a Tool with an "Ammo" value) that runs out or starts
+-- reloading stays empty for RELOAD_TIME seconds. The monster can't be hurt while the hiders hide.
+local SHOTS_TO_KILL = 10
+local STUN_TIME = 1
+local RELOAD_TIME = 60
+local FRIENDLY_FIRE = false -- false: hiders' guns can't hurt other hiders
 -- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
 local ROAR_SOUND = "rbxasset://sounds/uuhhh.mp3"
 local PUNCH_SOUND = "rbxasset://sounds/action_jump.mp3" -- (the old built-in swoosh.wav is blocked by Roblox now)
@@ -119,13 +130,30 @@ local function clearTools(player) -- items bought in the shop are kept (CaveHunt
 	end
 end
 
--- Everyone uses the head flashlight, because its beam follows where you look. A flashlight Tool
--- from StarterPack (like an Advanced Flashlight) can't do that, so it's taken out of hiders' hotbars.
-toggleLight:SetAttribute("UsingToolFlashlight", false)
+-- Your own flashlights: every Tool in StarterPack goes in the hiders' hotbars, and works the way
+-- you made it (its own click / F scripts). A Tool counts as a flashlight if it has a light in it or
+-- "flash", "torch", "lantern" or "light" in its name. Only when StarterPack has none do hiders get
+-- the built-in head flashlight instead. The monster never gets your tools.
+local StarterPack = game:GetService("StarterPack")
 local aimRemote = remote("CaveHunt_Aim")
-local function isOtherFlashlight(tool)
-	return tool:IsA("Tool") and tool.Name:lower():find("flash") ~= nil and not tool:GetAttribute("CaveHuntTool")
+local function isFlashlightTool(tool)
+	if not tool:IsA("Tool") or tool:GetAttribute("CaveHuntTool") or tool:FindFirstChild("Ammo") then
+		return false -- (a gun's muzzle flash light doesn't make it a flashlight)
+	end
+	if tool:HasTag("CaveHuntFlashlight") or tool:FindFirstChildWhichIsA("Light", true) then
+		return true
+	end
+	local name = tool.Name:lower()
+	return name:find("flash") ~= nil or name:find("torch") ~= nil or name:find("lantern") ~= nil or name:find("light") ~= nil
 end
+local useOwnFlashlights = false
+for _, tool in ipairs(StarterPack:GetChildren()) do
+	if isFlashlightTool(tool) then
+		CollectionService:AddTag(tool, "CaveHuntFlashlight") -- the copies in each backpack carry it too
+		useOwnFlashlights = true
+	end
+end
+toggleLight:SetAttribute("UsingToolFlashlight", useOwnFlashlights) -- the client leaves F to your tools then
 
 ------------------------------------------------------------------ hiders
 -- plain blocky body at the standard size, keeping the player's head, face,
@@ -216,6 +244,142 @@ local function setSpeeds(character, speeds)
 	end
 end
 
+------------------------------------------------------------------ guns
+local BIG_HEALTH = 10000 -- so no single hit can kill outright; hits are counted instead
+local function tell(player, text)
+	local notify = ReplicatedStorage:FindFirstChild("CaveHunt_Notify")
+	if notify then
+		if player then
+			notify:FireClient(player, text)
+		else
+			notify:FireAllClients(text)
+		end
+	end
+end
+
+-- a gun keeps its own scripts, but once it's empty (or starts reloading) it stays empty for a minute.
+-- The client runs the same watch, in case the gun counts its ammo in a LocalScript.
+local function watchGun(tool)
+	local ammo = tool:IsA("Tool") and tool:FindFirstChild("Ammo")
+	if not (ammo and ammo:IsA("ValueBase") and type(ammo.Value) == "number") or tool:GetAttribute("CaveHuntGun") then
+		return
+	end
+	tool:SetAttribute("CaveHuntGun", true)
+	local full = math.max(ammo.Value, 1)
+	local function loading()
+		return (tool:GetAttribute("LoadedAt") or 0) > workspace:GetServerTimeNow()
+	end
+	local function startReload()
+		if loading() then
+			return
+		end
+		tool:SetAttribute("LoadedAt", workspace:GetServerTimeNow() + RELOAD_TIME)
+		ammo.Value = 0
+		task.delay(RELOAD_TIME, function()
+			if ammo.Parent then
+				tool:SetAttribute("LoadedAt", nil)
+				ammo.Value = full
+			end
+		end)
+	end
+	ammo.Changed:Connect(function()
+		if loading() then
+			if ammo.Value ~= 0 then
+				ammo.Value = 0 -- the gun's own reload finished early: it's still loading
+			end
+		elseif ammo.Value <= 0 then
+			startReload()
+		elseif ammo.Value > full then
+			full = ammo.Value
+		end
+	end)
+	local reloading = tool:FindFirstChild("Reloading")
+	if reloading and reloading:IsA("BoolValue") then
+		reloading.Changed:Connect(function()
+			if reloading.Value then
+				startReload()
+			end
+		end)
+	end
+end
+
+local function watchGuns(player, character)
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	for _, holder in ipairs({ backpack, character }) do
+		for _, tool in ipairs(holder and holder:GetChildren() or {}) do
+			watchGun(tool)
+		end
+	end
+	if backpack and not backpack:GetAttribute("CaveHuntGuns") then
+		backpack:SetAttribute("CaveHuntGuns", true)
+		backpack.ChildAdded:Connect(watchGun)
+	end
+end
+
+-- hiders can't hurt each other: any damage that isn't the monster catching them heals straight back
+local function protectHider(character, humanoid)
+	if FRIENDLY_FIRE then
+		return
+	end
+	humanoid.MaxHealth = BIG_HEALTH
+	humanoid.Health = BIG_HEALTH
+	humanoid.HealthChanged:Connect(function(health)
+		if health > 0 and health < humanoid.MaxHealth then
+			humanoid.Health = humanoid.MaxHealth
+		end
+	end)
+end
+
+-- every hit on the monster is one shot of SHOTS_TO_KILL, and stuns it for a moment
+local function shootableMonster(player, character)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+	local regen = character:FindFirstChild("Health")
+	if regen and regen:IsA("BaseScript") then
+		regen:Destroy() -- Roblox's slow healing: the monster doesn't heal
+	end
+	humanoid.MaxHealth = BIG_HEALTH
+	humanoid.Health = BIG_HEALTH
+	character:SetAttribute("ShotsTaken", 0)
+	local shots, lastShot, expected, stuns = 0, 0, BIG_HEALTH, 0
+	humanoid.HealthChanged:Connect(function(health)
+		if humanoid.Health <= 0 or math.abs(health - expected) < 0.01 then
+			return
+		end
+		local round = ReplicatedStorage:FindFirstChild("CaveHunt_Round")
+		local hiding = round and round:GetAttribute("State") == "Hiding"
+		if health < expected and not hiding and os.clock() - lastShot > 0.1 then -- one bullet can touch several parts
+			shots += 1
+			lastShot = os.clock()
+			character:SetAttribute("ShotsTaken", shots)
+			stuns += 1
+			local mine = stuns
+			character:SetAttribute("Stunned", true) -- the client's movement script holds it still
+			task.delay(STUN_TIME, function()
+				if stuns == mine then
+					character:SetAttribute("Stunned", nil)
+				end
+			end)
+			local flash = Instance.new("Highlight")
+			flash.FillColor = Color3.fromRGB(255, 40, 30)
+			flash.FillTransparency = 0.3
+			flash.OutlineTransparency = 1
+			flash.Parent = character
+			Debris:AddItem(flash, 0.2)
+			if shots < SHOTS_TO_KILL then
+				local left = SHOTS_TO_KILL - shots
+				tell(nil, ("The monster was shot! %d more shot%s to kill it"):format(left, left == 1 and "" or "s"))
+			else
+				player:SetAttribute("ShotDead", true) -- CaveHunt_Rounds ends the round: the hiders win
+			end
+		end
+		expected = BIG_HEALTH * (1 - shots / SHOTS_TO_KILL)
+		humanoid.Health = expected
+	end)
+end
+
 local function setupHider(player, character)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
@@ -225,19 +389,18 @@ local function setupHider(player, character)
 		humanoid:ApplyDescription(hiderLook(player))
 	end)
 	setSpeeds(character, HIDER_SPEEDS)
+	protectHider(character, humanoid)
+	watchGuns(player, character)
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None -- no name over your head (it shows through walls)
 	player.CameraMode = Enum.CameraMode.LockFirstPerson -- hiders see through their own eyes
 	player.CameraMinZoomDistance = 0.5
-	addFlashlight(character) -- after the new look, because that can replace the head
-	player:SetAttribute("FlashlightOn", true)
-	for _, holder in ipairs({ player:FindFirstChildOfClass("Backpack"), character }) do
-		for _, tool in ipairs(holder and holder:GetChildren() or {}) do
-			if isOtherFlashlight(tool) then
-				tool:Destroy()
-			end
-		end
+	if useOwnFlashlights then
+		giveTools(player, { "Phone" }) -- your flashlights come from StarterPack by themselves
+	else
+		addFlashlight(character) -- after the new look, because that can replace the head
+		player:SetAttribute("FlashlightOn", true)
+		giveTools(player, HIDER_TOOLS)
 	end
-	giveTools(player, HIDER_TOOLS)
 end
 
 -- where each hider is looking (sent ~10 times a second), so everyone sees their beam sweep around.
@@ -333,6 +496,7 @@ local function setupMonster(player, character)
 	clearTools(player) -- no flashlight or phone for the monster
 	giveTools(player, MONSTER_TOOLS)
 	setSpeeds(character, MONSTER_SPEEDS)
+	shootableMonster(player, character)
 	local monsterHumanoid = character:FindFirstChildOfClass("Humanoid")
 	if monsterHumanoid then
 		monsterHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
@@ -418,8 +582,8 @@ local lastPunch = {}
 punchRemote.OnServerEvent:Connect(function(player, animated)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if player:GetAttribute("Role") ~= "Monster" or not root or os.clock() - (lastPunch[player] or -math.huge) < PUNCH_COOLDOWN * 0.8 then
-		return
+	if player:GetAttribute("Role") ~= "Monster" or not root or character:GetAttribute("Stunned") or os.clock() - (lastPunch[player] or -math.huge) < PUNCH_COOLDOWN * 0.8 then
+		return -- (no punching while it's stunned by a shot)
 	end
 	lastPunch[player] = os.clock()
 	local reach = character:GetAttribute("Reach") or 8
@@ -678,6 +842,16 @@ local function restoreLights(player)
 	end
 end
 
+local function putAwayFlashlight(character)
+	local held = character:FindFirstChildOfClass("Tool")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if held and humanoid and isFlashlightTool(held) then
+		humanoid:UnequipTools()
+		return true
+	end
+	return false
+end
+
 local function lightsOut(player, seconds)
 	local character = player.Character
 	if not character then
@@ -685,6 +859,10 @@ local function lightsOut(player, seconds)
 	end
 	local untilTime = math.max(player:GetAttribute("LightsOutUntil") or 0, workspace:GetServerTimeNow() + seconds)
 	player:SetAttribute("LightsOutUntil", untilTime)
+	putAwayFlashlight(character)
+	if useOwnFlashlights then
+		return -- your tools switch their own lights; they just can't be held until it's over
+	end
 	local lights = dimmed[player] or {}
 	dimmed[player] = lights
 	for _, light in ipairs(character:GetDescendants()) do
@@ -701,6 +879,24 @@ local function lightsOut(player, seconds)
 		restoreLights(player)
 	end)
 end
+
+-- taking a flashlight out again while it's dead puts it straight back
+local lastDeadNote = {}
+task.spawn(function()
+	while true do
+		task.wait(0.15)
+		for _, player in ipairs(Players:GetPlayers()) do
+			local left = (player:GetAttribute("LightsOutUntil") or 0) - workspace:GetServerTimeNow()
+			if left > 0 and player.Character and putAwayFlashlight(player.Character) and os.clock() - (lastDeadNote[player] or 0) > 2 then
+				lastDeadNote[player] = os.clock()
+				local notify = ReplicatedStorage:FindFirstChild("CaveHunt_Notify")
+				if notify then
+					notify:FireClient(player, ("Your flashlight is dead for %ds more"):format(math.ceil(left)))
+				end
+			end
+		end
+	end
+end)
 
 local lastRoar = {}
 roarRemote.OnServerEvent:Connect(function(player, kind)
@@ -851,6 +1047,7 @@ Players.PlayerRemoving:Connect(function(player)
 	lastRoar[player] = nil
 	lastShrink[player] = nil
 	dimmed[player] = nil
+	lastDeadNote[player] = nil
 	lastPunch[player] = nil
 	lastAim[player] = nil
 end)
@@ -1830,6 +2027,7 @@ local function runRound(my, chosen)
 			task.spawn(setRole, p, "Hider") -- everyone else starts at Base Camp
 		end
 	end
+	m:SetAttribute("ShotDead", nil)
 	setRole(m, "Monster") -- the monster starts at one of the lairs
 	if generation ~= my then
 		return
@@ -1860,6 +2058,9 @@ local function runRound(my, chosen)
 		info:SetAttribute("HidersLeft", left)
 		if m.Parent ~= Players then
 			result, winner = "The monster left the game. Hiders win!", "Hiders"
+		elseif m:GetAttribute("ShotDead") then
+			m:SetAttribute("ShotDead", nil)
+			result, winner = "The hiders shot the monster dead. Hiders win!", "Hiders"
 		elseif hadHiders and left == 0 then
 			result, winner = m.DisplayName .. " caught everyone. The monster wins!", "Monster"
 		elseif os.clock() >= finishAt then
@@ -2253,8 +2454,11 @@ RunService.Heartbeat:Connect(function(dt)
 	if not humanoid or humanoid.Health <= 0 then
 		return
 	end
-	if player:GetAttribute("Hidden") and character:FindFirstChildOfClass("Tool") then
+	local held = character:FindFirstChildOfClass("Tool")
+	if held and player:GetAttribute("Hidden") then
 		humanoid:UnequipTools() -- nothing in your hands (or shining) while you hide
+	elseif held and held:HasTag("CaveHuntFlashlight") and (player:GetAttribute("LightsOutUntil") or 0) > workspace:GetServerTimeNow() then
+		humanoid:UnequipTools() -- the monster's roar or cry killed your flashlight for a while
 	end
 	local role = isMonster() and "Monster" or "Hider"
 	local moving = humanoid.MoveDirection.Magnitude > 0.1
@@ -2386,7 +2590,12 @@ task.spawn(function()
 		end
 		status.Text = player:GetAttribute("Hidden") and "HIDDEN" or (move.crouching and "CROUCHING" or (move.sprinting and "RUNNING" or ""))
 		status.TextColor3 = color
-		controls.Text = (CONTROLS[r] or CONTROLS.Hider) .. (player:GetAttribute("IsAdmin") and "\nAdmin : [P]" or "")
+		local text = CONTROLS[r] or CONTROLS.Hider
+		local lightRemote = ReplicatedStorage:FindFirstChild("CaveHunt_ToggleFlashlight")
+		if lightRemote and lightRemote:GetAttribute("UsingToolFlashlight") then
+			text = text:gsub("Flashlight : %[F%]", "Flashlight : hold it, [Click]") -- your own flashlight tools
+		end
+		controls.Text = text .. (player:GetAttribute("IsAdmin") and "\nAdmin : [P]" or "")
 		controls.TextColor3 = color
 		local look = workspace.CurrentCamera.CFrame.LookVector
 		local heading = math.deg(math.atan2(look.X, -look.Z)) % 360 -- 0 = north (-Z)
@@ -3043,22 +3252,109 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 end)
 
--- Flashlight: F, the on-screen "Light" button, L1, or the Flashlight hotbar item switches it on and off
+-- The built-in head flashlight: F, the on-screen "Light" button, L1, or the Flashlight hotbar item
+-- switches it on and off. With your own flashlight tools in StarterPack, F is left to their scripts.
 task.spawn(function()
 	local toggle = ReplicatedStorage:WaitForChild("CaveHunt_ToggleFlashlight", 30)
 	if not toggle then
 		return
 	end
-	ContextActionService:BindAction("CaveHunt_Flashlight", function(_, state)
-		if isMonster() then
-			return Enum.ContextActionResult.Pass
+	local function update()
+		if toggle:GetAttribute("UsingToolFlashlight") then
+			ContextActionService:UnbindAction("CaveHunt_Flashlight")
+			return
 		end
-		if state == Enum.UserInputState.Begin then
-			toggle:FireServer()
+		ContextActionService:BindAction("CaveHunt_Flashlight", function(_, state)
+			if isMonster() then
+				return Enum.ContextActionResult.Pass
+			end
+			if state == Enum.UserInputState.Begin then
+				toggle:FireServer()
+			end
+			return Enum.ContextActionResult.Sink
+		end, true, Enum.KeyCode.F, Enum.KeyCode.ButtonL1)
+		ContextActionService:SetTitle("CaveHunt_Flashlight", "Light")
+	end
+	toggle:GetAttributeChangedSignal("UsingToolFlashlight"):Connect(update)
+	update()
+end)
+
+-- Guns (a Tool with an "Ammo" value, like the Luger) shoot with their own scripts. Once one is empty
+-- or starts reloading it stays empty for a minute. CaveHunt_Players does that on the server; this
+-- copy covers a gun that counts its ammo in a LocalScript. While the gun in your hand is loading, a
+-- countdown shows above the hotbar.
+task.spawn(function()
+	local RELOAD_TIME = 60 -- keep the same as RELOAD_TIME in CaveHunt_Players
+	local watched = setmetatable({}, { __mode = "k" })
+	local function watchGun(tool)
+		local ammo = tool:IsA("Tool") and tool:FindFirstChild("Ammo")
+		if watched[tool] or not (ammo and ammo:IsA("ValueBase") and type(ammo.Value) == "number") then
+			return
 		end
-		return Enum.ContextActionResult.Sink
-	end, true, Enum.KeyCode.F, Enum.KeyCode.ButtonL1)
-	ContextActionService:SetTitle("CaveHunt_Flashlight", "Light")
+		watched[tool] = true
+		local full = math.max(ammo.Value, 1)
+		local function loading()
+			return (tool:GetAttribute("LoadedAt") or 0) > workspace:GetServerTimeNow()
+		end
+		local function startReload()
+			if loading() then
+				return
+			end
+			tool:SetAttribute("LoadedAt", workspace:GetServerTimeNow() + RELOAD_TIME)
+			ammo.Value = 0
+			task.delay(RELOAD_TIME, function()
+				if ammo.Parent and not loading() then
+					tool:SetAttribute("LoadedAt", nil)
+					ammo.Value = math.max(ammo.Value, full)
+				end
+			end)
+		end
+		ammo.Changed:Connect(function()
+			if loading() then
+				if ammo.Value ~= 0 then
+					ammo.Value = 0
+				end
+			elseif ammo.Value <= 0 then
+				startReload()
+			elseif ammo.Value > full then
+				full = ammo.Value
+			end
+		end)
+		local reloading = tool:FindFirstChild("Reloading")
+		if reloading and reloading:IsA("BoolValue") then
+			reloading.Changed:Connect(function()
+				if reloading.Value then
+					startReload()
+				end
+			end)
+		end
+	end
+	local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), { Name = "CaveHunt_Reload", ResetOnSpawn = false })
+	local label = make("TextLabel", gui, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -96),
+		Size = UDim2.fromOffset(260, 28),
+		Font = Enum.Font.RobotoMono, -- like the HUD
+		TextSize = 20,
+		TextColor3 = Color3.fromRGB(255, 132, 34),
+		TextStrokeTransparency = 0.6,
+		Visible = false,
+	})
+	while true do
+		local character = player.Character
+		for _, holder in ipairs({ player:FindFirstChildOfClass("Backpack"), character }) do
+			for _, tool in ipairs(holder and holder:GetChildren() or {}) do
+				watchGun(tool)
+			end
+		end
+		local held = character and character:FindFirstChildOfClass("Tool")
+		local left = held and (held:GetAttribute("LoadedAt") or 0) - workspace:GetServerTimeNow() or 0
+		label.Visible = left > 0
+		if left > 0 then
+			label.Text = ("RELOADING  %ds"):format(math.ceil(left))
+		end
+		task.wait(0.2)
+	end
 end)
 
 -- your beam points where you look (up and down too); the server hears about it ~10 times a
@@ -3430,8 +3726,8 @@ local ITEMS = {
 onUse(function(character)
 	local root = character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not root then
-		return
+	if not root or character:GetAttribute("Stunned") then
+		return -- (not while stunned by a shot)
 	end
 	local look = workspace.CurrentCamera.CFrame.LookVector
 	local ahead = Vector3.new(look.X, 0, look.Z)
@@ -3456,8 +3752,8 @@ local SWIPE = true -- false: just the jump
 onUse(function(character)
 	local root = character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not (root and humanoid) then
-		return
+	if not (root and humanoid) or character:GetAttribute("Stunned") then
+		return -- (not while stunned by a shot)
 	end
 	local look = workspace.CurrentCamera.CFrame.LookVector
 	local ahead = Vector3.new(look.X, 0, look.Z)
@@ -3886,6 +4182,15 @@ local function run()
 	print("[GameScripts] " .. monsterNote)
 	if quieted > 0 then
 		print(("[GameScripts] Switched off %d scripts and prompts inside your hiding spots, so hiding goes through E."):format(quieted))
+	end
+	local starterTools = {}
+	for _, tool in ipairs(game:GetService("StarterPack"):GetChildren()) do
+		if tool:IsA("Tool") and not tool:GetAttribute("CaveHuntTool") then
+			table.insert(starterTools, tool.Name)
+		end
+	end
+	if #starterTools > 0 then
+		print("[GameScripts] Hiders get your StarterPack tools: " .. table.concat(starterTools, ", ") .. ". If one of them is a flashlight (a light inside it, or \"flash\"/\"torch\"/\"lantern\"/\"light\" in its name), the built-in head flashlight is switched off and F is left to your tools. The monster doesn't get them.")
 	end
 	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities, rounds with spectating, admin commands (Admin button or ;help in chat), the troll shop (Shop button or B), and the cave mood. Press Play to try them.")
 	return true

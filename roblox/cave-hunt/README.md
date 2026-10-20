@@ -37,7 +37,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 **Rounds**
 1. **Picking the monster:** once 2 or more players are in the game, a 15-second break counts down. Then one player is picked at random as the monster. Everyone else starts at Base Camp.
 2. **Hiding (20 seconds):** the monster is frozen at its lair with a black screen while everyone hides.
-3. **The hunt (5 minutes):** the monster wins if it catches every hider. The hiders win if anyone is still alive when time runs out.
+3. **The hunt (5 minutes):** the monster wins if it catches every hider. The hiders win if anyone is still alive when time runs out, or if they shoot the monster dead (10 shots).
 4. **After the round:** the result shows for 8 seconds, then everyone's back at Base Camp as a hider and the next break starts.
 - **Rewards:** surviving a round is worth 25 coins, and so is catching everyone as the monster.
 - **On your own** (fewer than 2 players) it's free play: no rounds start by themselves, but an admin can start one.
@@ -79,15 +79,27 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Camera:** hiders are locked in first person, with a small dot in the middle of the screen instead of the mouse pointer.
   - **Menus:** the pointer comes back, free to click, while a menu is open: the shop (**B**), the Admin panel (**P**) and the phone list.
 - **Name tags:** nobody's name shows over their head, because it would show through walls.
-- **Flashlight:** **F**, or the item in slot 1, switches it on and off. The slot says **Light: ON** or **Light: OFF**, and it stays that way until you switch it again. It starts on.
-  - **Tracking:** the beam follows where you look, up and down too, with no lag on your own screen. Other players see it sweep around too.
-  - **Beam:** a bright beam where you point (up to 60 studs), with a softer wider halo round it, plus a light that always shines on the ground just ahead of you.
-  - **Glow:** while it's on, there's a faint glow at your feet that only you see. Other players don't see you glowing.
-  - **Flashlight tools:** a flashlight Tool in StarterPack (like your Advanced Flashlight) is taken out of hiders' hotbars, because a held tool's beam can't follow where you look.
+- **Flashlights: your own tools.** Every Tool you put in **StarterPack** (like your Advanced Flashlight, Flashlight, Model and Luger) goes in each hider's hotbar, ahead of the Phone. They work the way they're built: their own scripts handle clicking and **F**.
+  - **What counts as a flashlight:** a Tool with a light inside it, or with "flash", "torch", "lantern" or "light" in its name. A gun's muzzle-flash light doesn't count.
+  - **When you have one:** the built-in head flashlight below is switched off completely, and `GameScripts` doesn't use **F**, so your tools' own **F** scripts get it.
+  - **The monster** never gets them (it has night vision).
+  - **Hiding** puts whatever you're holding away. Take it out again after you come out.
+  - **The monster's Roar and Cry** make hiders put their flashlight away. They can't take it out again until the effect wears off ("Your flashlight is dead for Ns more").
+  - **Names:** the hotbar shows each tool's Name, so rename `Model` to something like `Torch` in Studio.
+- **The built-in head flashlight** is only used when StarterPack has no flashlight. **F**, or its hotbar slot (**Light: ON / OFF**), switches it on and off.
+  - **Tracking:** the beam follows where you look, up and down too.
+  - **Beam:** a bright beam where you point (up to 60 studs) with a softer, wider halo, plus a light on the ground just ahead of you. While it's on, there's also a faint glow at your feet that only you see.
 - **Without a light:** the cave is very dark, but not pitch black. Rock and shapes are just visible (`CAVE_AMBIENT` at the top of `StarterPlayerScripts.CaveHunt_Client`).
 - **Hiding (E):** walk up to any hiding spot and press **E** to hide inside it. You go invisible, your tools are put away and your light switches off. Press **E** again to come out.
   - **While hiding:** the camera goes to third person, looking at your spot from just outside its door, so you can watch the room.
   - **Your own hiding models:** hiding models that came with their own hiding scripts or prompts (from the Toolbox) have those switched off, so all hiding goes through **E**. Otherwise players hidden that way stay visible and the monster can't find them.
+- **Guns: your own tools** (like the **Luger** in StarterPack). They go in every hider's hotbar and shoot with their own scripts. A Tool counts as a gun if it has an `Ammo` value in it.
+  - **Shooting the monster:** each hit counts as one shot, whatever damage the gun does. **10 shots** kill it, and it never heals. Each shot also stuns it for **1 second**: it can't move, punch, Leap or Lunge. Everyone gets a message with how many shots are left.
+  - **Killing it:** the round ends there and the hiders win.
+  - **During hide time** the monster can't be hurt, so it can't be shot while it's frozen at its lair.
+  - **Reloading takes a minute.** Once a gun is empty, or its own reload starts (like pressing R), it stays empty for 60 seconds, even if its own script reloads faster. "RELOADING 42s" counts down above the hotbar while you hold it.
+  - **No friendly fire:** hiders' guns can't hurt other hiders. Set `FRIENDLY_FIRE = true` to allow it.
+  - **Settings:** `SHOTS_TO_KILL`, `STUN_TIME`, `RELOAD_TIME` and `FRIENDLY_FIRE` at the top of `ServerScriptService.CaveHunt_Players`. If you change `RELOAD_TIME`, change it at the top of the guns part of `CaveHunt_Client` too.
 - **Phone (hotbar, 8s cooldown):** pick another hider from the list. Their phone rings for 4 seconds: everyone nearby hears it, and "RING RING" flashes above them with a blue glow, even if they're inside a closet. They get a message saying who's calling.
 
 **The monster**
@@ -107,7 +119,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
   2. **Lunge** (5s): a low, fast pounce about 40 studs straight ahead, the way you're looking. As it lands, the monster swipes, so it catches a hider it lands on (set `SWIPE = false` in the Lunge tool's script to just jump).
   3. **Sense** (15s): for 4 seconds, a red smudge on a ring round the middle of the screen hints which way each hider is. It's rough, give or take 25 degrees, and doesn't show exactly where they are. Closer hiders give a bigger, brighter smudge.
   4. **Scent** (20s): for 8 seconds, a glowing trail shows where each hider walked in the last 30 seconds.
-  5. **Roar** (25s): a long growl. Hiders within 140 studs get their screen shaken for 3 seconds and their flashlight dies for 12 seconds. **F** can't switch it back on until then.
+  5. **Roar** (25s): a long growl. Hiders within 140 studs get their screen shaken for 3 seconds and their flashlight dies for 12 seconds. They can't switch it back on (or take it out) until then.
   6. **Cry** (75s): a 10-second wail that rises and falls and is heard much further away. Hiders within 260 studs get a 9-second shake and their flashlight dies for 35 seconds.
   - **Changing them:** the `ROAR` and `CRY` settings at the top of `CaveHunt_Players` set range, how long each part lasts, and the recharge. If you change a recharge, change the number in that tool's `cooldown(...)` too.
 - **Look: your monster model.** `GameScripts` looks in Workspace for it: a model with "monster" in its name, or else a character model (one with a `Humanoid`, like your Smiler). It moves the model to **ServerStorage** and says so in the Output. To pick a different one, put it in ServerStorage, name it `Monster`, and run the command again.
