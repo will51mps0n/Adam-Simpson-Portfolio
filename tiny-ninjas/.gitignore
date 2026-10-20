@@ -1,0 +1,9 @@
+# Built place file (rebuild with: rojo build -o TinyNinjas.rbxlx)
+/TinyNinjas.rbxlx
+/TinyNinjas.rbxl
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+sourcemap.json

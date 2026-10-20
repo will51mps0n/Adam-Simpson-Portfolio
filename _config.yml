@@ -20,3 +20,7 @@ github:
 
 author: "Adam Simpson"
 url: "https://will51mps0n.github.io/will51mps0n"
+
+# The Roblox game source has its own folder; keep it off the portfolio site.
+exclude:
+  - tiny-ninjas/
