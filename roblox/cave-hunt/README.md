@@ -6,7 +6,7 @@ Studio scripts for an asymmetric hide-and-seek game: one player is the monster a
 | --- | --- |
 | `CaveBuilder.lua` | Carves the cave out of terrain (4 rooms joined by tunnels) and adds a spawn, monster spawns, banks of lockers along the walls, and lots of spots saved for your models. |
 | `PlaceAssets.lua` | Takes **your** models (closets, hiding spots, minecarts, lights, big room, …) and fills the cave with copies. |
-| `GameScripts.lua` | Installs the gameplay: same-size hiders, flashlights, hiding, phones, the monster and its abilities, coins and the troll shop, and the dark cave mood. |
+| `GameScripts.lua` | Installs the gameplay: rounds with spectating and admin commands, same-size hiders, flashlights, hiding, phones, the monster and its abilities, coins and the troll shop, and the dark cave mood. |
 
 ## Quick start: one command does everything
 
@@ -24,7 +24,47 @@ It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=tr
 
 ## Playing
 
-Press **Play**. You spawn in Base Camp as a **hider**. The **Play as Monster** button in the top-right corner switches you to the monster and back. It's there for testing until there's a round system that picks the monster at random.
+Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the screen shows what the round is doing.
+
+**Rounds**
+1. **Picking the monster:** once 2 or more players are in the game, a 15-second break counts down. Then one player is picked at random as the monster. Everyone else starts at Base Camp.
+2. **Hiding (20 seconds):** the monster is frozen at its lair with a black screen while everyone hides.
+3. **The hunt (5 minutes):** the monster wins if it catches every hider. The hiders win if anyone is still alive when time runs out.
+4. **After the round:** the result shows for 8 seconds, then everyone's back at Base Camp as a hider and the next break starts.
+- **Rewards:** surviving a round is worth 25 coins, and so is catching everyone as the monster.
+- **On your own** (fewer than 2 players) it's free play: no rounds start by themselves, but an admin can start one.
+
+**Spectating:** when you're caught you don't respawn. You watch the others until the round ends.
+- **Switching who you watch:** the **<** and **>** buttons at the bottom of the screen, or **Q** and **E**.
+- **Joining mid-round:** players who join during a round spectate until the next one.
+
+**Admin commands**
+- **Who's an admin:** in Studio, everyone. In a published game: the game's owner (or rank 255 of the owning group), plus anyone you add to `ADMINS` at the top of `ServerScriptService.CaveHunt_Rounds`, e.g. `local ADMINS = { 12345678, "MyFriend" }`.
+- **Admin panel:** admins get an **Admin** button under the Shop button. It has Restart round, Make me the monster, Make me a hider, Spectate, Stop rounds, and a list of players to make the monster.
+- **Chat commands:** the same things work typed in chat. Names can be shortened (`;monster bo` finds Bob):
+
+| Command | What it does |
+| --- | --- |
+| `;restart` or `;start` | A new round now, with a random monster. Also restarts rounds after `;end`. |
+| `;restart Bob` | A new round now, with Bob as the monster. |
+| `;monster` | A new round now, with you as the monster. |
+| `;monster Bob` | A new round now, with Bob as the monster. |
+| `;hider` | Back to Base Camp as a hider. If you're the monster, a new round starts with someone else as the monster. |
+| `;hider Bob` | Brings Bob back as a hider (also brings back someone who was caught). |
+| `;spectate` / `;spectate Bob` | Switch to spectating. `;hider` brings you back. |
+| `;end` | Stop the round. Everyone goes back to Base Camp, and rounds don't start by themselves until `;start`. |
+
+**Testing with more than one player in Studio:** go to the **Test** tab, set the player count next to **Clients and Servers** to 2, and press **Start**. You get a window for each player.
+
+**Round settings** (top of `ServerScriptService.CaveHunt_Rounds`):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `HIDE_TIME` | `20` | Seconds the hiders get before the monster is let loose |
+| `ROUND_TIME` | `300` | Seconds the monster has to catch everyone |
+| `INTERMISSION` | `15` | Break between rounds |
+| `MIN_PLAYERS` | `2` | Rounds start by themselves once this many players are in |
+| `AUTO_ROUNDS` | `true` | `false` = rounds only start when an admin starts them |
 
 **Hiders**
 - **Your character:** the plain blocky Roblox body at the standard size, with your own head, face, hair, hats, skin colors and clothes.
@@ -55,7 +95,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The **Play as Monster** b
 
 **Everything in the shop is free for now** (for testing). The prices below kick in when you set `FREE_SHOP = false` at the top of `ServerScriptService.CaveHunt_Shop`. Running the command again sets it back to free.
 
-**The shop:** click the **Shop** button under the role button, or press **B**. Bought items go in your hotbar. Each use spends one, and buying the same thing again stacks it ("Glowstick x3"). Items stay in your hotbar after you die. The monster can only buy the items marked "anyone".
+**The shop:** click the **Shop** button in the top-right corner, or press **B**. Bought items go in your hotbar. Each use spends one, and buying the same thing again stacks it ("Glowstick x3"). Items stay in your hotbar after you die. The monster can only buy the items marked "anyone".
 
 | Item | Price | Who | What it does |
 | --- | --- | --- | --- |
@@ -175,10 +215,14 @@ These are CollectionService tags, so they work wherever the object is in the tre
 
 | Player attribute | Meaning |
 | --- | --- |
-| `Role` | `"Hider"` or `"Monster"` |
+| `Role` | `"Hider"`, `"Monster"` or `"Spectator"` |
+| `IsAdmin` | `true` for admins |
 | `Hidden` | `true` while hiding |
 
 - **Knocking hiders out:** `ServerStorage.CaveHunt_KnockOut:Invoke(spotModel)` throws whoever is hiding in that spot out and returns that player.
+- **Switching roles:** `ServerStorage.CaveHunt_Roles:Invoke(player, "Monster")` (or `"Hider"`, `"Spectator"`).
+- **The round:** `ReplicatedStorage.CaveHunt_Round` has the attributes `State` (`Waiting`, `Intermission`, `Starting`, `Hiding`, `Hunting`, `Over`), `EndsAt` (server time), `Monster`, `HidersLeft` and `Message`.
+- **Spawning:** `CaveHunt_Rounds` turns off `Players.CharacterAutoLoads` while the game runs and spawns players itself, so caught hiders stay out until the round ends.
 - **Hotbar items:** the templates live in `ServerStorage.CaveHunt_Tools`. Shop items have the attributes `Item`, `Price`, `Who` and `Order`.
 - **Giving coins from your own scripts:** `ServerStorage.CaveHunt_Reward:Fire(player, "Catch")` (or `"Find"`) pays out that reward. Coins are `player.leaderstats.Coins`.
 - **Adding back other room types:** add a room with `kind = "Lair"` (monster lair) or `kind = "Maze"` (the Backrooms) to `ROOMS` in `CaveBuilder.lua`.

@@ -15,8 +15,8 @@
 	        called "Monster" (Humanoid + HumanoidRootPart) that's its body;
 	        otherwise your own character turns into a tall black creature
 	        with red eyes. It spawns at a random MonsterSpawn (a lair)
-	      * the "Play as Monster" / "Play as Hider" button switches roles
-	        (for testing until there's a round system)
+	      * switches players between hider, monster and spectator for
+	        CaveHunt_Rounds (ServerStorage.CaveHunt_Roles)
 	  ServerStorage.CaveHunt_Tools
 	      the hotbar items. Hiders get a Phone (ring another hider: their
 	      phone rings out loud and flashes, even inside a closet). The
@@ -27,13 +27,19 @@
 	  ServerScriptService.CaveHunt_Shop
 	      coins (on the leaderboard), the shop, the troll items, phone calls
 	      and the glowing coins lying around the cave
+	  ServerScriptService.CaveHunt_Rounds
+	      rounds (one monster, everyone else hides; the monster waits
+	      blindfolded while they hide), caught hiders spectate until the round
+	      ends, and admin commands: the Admin button or chat ;restart ;monster
+	      ;hider ;spectate ;end ;start
 	  ServerScriptService.CaveHunt_Hiding
 	      hiders press E at any HidingSpot to hide inside it (invisible, light
 	      off) and E again to come out. The monster pressing E on a hiding
 	      spot ("Search") throws whoever is inside out
 	  StarterPlayerScripts.CaveHunt_Client
-	      the role and shop buttons, flashlight aiming, the cave mood (only while
-	      you're inside the cave; red night vision for the monster) and flickering lights
+	      the round timer, the shop and Admin buttons, spectate mode, flashlight
+	      aiming, the cave mood (only while you're inside the cave; red night
+	      vision for the monster) and flickering lights
 
 	Running it again replaces these scripts with the latest version.
 ]]
@@ -66,7 +72,6 @@ local function remote(name)
 	end
 	return r
 end
-local setRole = remote("CaveHunt_SetRole")
 local toggleLight = remote("CaveHunt_ToggleFlashlight")
 local roarRemote = remote("CaveHunt_Roar")
 local shakeRemote = remote("CaveHunt_Shake")
@@ -328,20 +333,30 @@ local function becomeHider(player)
 	player:LoadCharacter() -- spawns at Base Camp; the hider look is applied when it loads
 end
 
-local busy = {}
-setRole.OnServerEvent:Connect(function(player, role)
-	if busy[player] or (role ~= "Monster" and role ~= "Hider") or role == player:GetAttribute("Role") then
-		return
+local function becomeSpectator(player) -- no body; the client watches the others
+	player:SetAttribute("Role", "Spectator")
+	local character = player.Character
+	player.Character = nil
+	if character then
+		character:Destroy()
 	end
-	busy[player] = true
+end
+
+-- CaveHunt_Rounds (or your own scripts) switch roles with
+-- ServerStorage.CaveHunt_Roles:Invoke(player, "Monster" / "Hider" / "Spectator")
+local roles = ServerStorage:FindFirstChild("CaveHunt_Roles") or Instance.new("BindableFunction")
+roles.Name = "CaveHunt_Roles"
+roles.OnInvoke = function(player, role)
 	if role == "Monster" then
 		becomeMonster(player)
-	else
+	elseif role == "Hider" then
 		becomeHider(player)
+	elseif role == "Spectator" then
+		becomeSpectator(player)
 	end
-	task.wait(1)
-	busy[player] = nil
-end)
+	return true
+end
+roles.Parent = ServerStorage
 
 ------------------------------------------------------------------ the monster's roar
 -- shakes nearby hiders' screens and knocks out their lights for 5 seconds
@@ -392,7 +407,7 @@ local function onPlayer(player)
 		player:SetAttribute("Role", "Hider")
 	end
 	player.CharacterAppearanceLoaded:Connect(function(character)
-		if player:GetAttribute("Role") ~= "Monster" then
+		if player:GetAttribute("Role") == "Hider" then
 			setupHider(player, character)
 		end
 	end)
@@ -402,7 +417,7 @@ local function onPlayer(player)
 			task.defer(becomeMonster, player)
 		end
 	end)
-	if player.Character and player:HasAppearanceLoaded() and player:GetAttribute("Role") ~= "Monster" then
+	if player.Character and player:HasAppearanceLoaded() and player:GetAttribute("Role") == "Hider" then
 		task.spawn(setupHider, player, player.Character)
 	end
 end
@@ -412,7 +427,6 @@ for _, player in ipairs(Players:GetPlayers()) do
 end
 Players.PlayerRemoving:Connect(function(player)
 	looks[player] = nil
-	busy[player] = nil
 	converting[player] = nil
 	lastRoar[player] = nil
 end)
@@ -596,7 +610,7 @@ local FREE_SHOP = true -- for testing: everything in the shop costs nothing. fal
 local START_COINS = 40
 local INCOME = 1 -- every hider in the cave earns this many coins...
 local INCOME_EVERY = 5 -- ...every this many seconds
-local REWARDS = { Catch = 15, Find = 5 } -- the monster: catching a hider, pulling one out of a hiding spot
+local REWARDS = { Catch = 15, Find = 5, Win = 25, Survive = 25 } -- the monster: a catch, pulling one out of a spot, catching everyone; hiders: surviving a round
 local PICKUPS = 10 -- glowing coins lying around the cave (hiders pick them up)
 local PICKUP_VALUE = 5
 local PHONE_COOLDOWN = 8
@@ -668,7 +682,7 @@ local function alive(player)
 end
 
 local function isHider(p)
-	return typeof(p) == "Instance" and p:IsA("Player") and p.Parent == Players and p:GetAttribute("Role") ~= "Monster"
+	return typeof(p) == "Instance" and p:IsA("Player") and p.Parent == Players and p:GetAttribute("Role") == "Hider"
 end
 
 local function allowed(item, player)
@@ -762,8 +776,9 @@ local function addCoins(player, n, why)
 end
 
 reward.Event:Connect(function(player, kind)
+	local why = { Catch = "you caught a hider", Find = "you found a hider", Win = "you caught everyone", Survive = "you survived the round" }
 	if typeof(player) == "Instance" and player:IsA("Player") and REWARDS[kind] then
-		addCoins(player, REWARDS[kind], kind == "Catch" and "you caught a hider" or "you found a hider")
+		addCoins(player, REWARDS[kind], why[kind])
 	end
 end)
 
@@ -1240,6 +1255,407 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 ]==]
 
+SOURCES.Rounds = [==[
+-- CaveHunt: rounds, admin commands and spectating.
+-- A round: one player is the monster and everyone else hides. The monster waits, frozen and
+-- blindfolded, for HIDE_TIME while the hiders hide, then hunts for ROUND_TIME. Caught hiders
+-- spectate until the round ends. Admins (everyone in Studio, the game's owner, and ADMINS below)
+-- use the Admin button or chat commands that start with ";" (;restart ;monster ;hider ;spectate ;end ;start).
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local RunService = game:GetService("RunService")
+
+local HIDE_TIME = 20 -- seconds the hiders get before the monster is let loose
+local ROUND_TIME = 300 -- how long the monster has to catch everyone
+local INTERMISSION = 15 -- break between rounds
+local AFTER_ROUND = 8 -- how long the result shows before everyone's back at Base Camp
+local MIN_PLAYERS = 2 -- rounds start by themselves once this many people are in the game
+local AUTO_ROUNDS = true
+local RESPAWN_TIME = 3 -- outside a round (and for the monster), how long until you come back
+local ADMINS = {} -- admins besides the game's owner: user IDs or usernames, e.g. { 12345678, "MyFriend" }
+
+Players.CharacterAutoLoads = false -- this script decides who spawns, so caught hiders can spectate
+
+local function remote(name)
+	local r = ReplicatedStorage:FindFirstChild(name)
+	if not r then
+		r = Instance.new("RemoteEvent")
+		r.Name = name
+		r.Parent = ReplicatedStorage
+	end
+	return r
+end
+local notify = remote("CaveHunt_Notify")
+local adminRemote = remote("CaveHunt_Admin")
+
+-- the round's state, for the timer at the top of everyone's screen
+local info = ReplicatedStorage:FindFirstChild("CaveHunt_Round") or Instance.new("Configuration")
+info.Name = "CaveHunt_Round"
+info.Parent = ReplicatedStorage
+local function setState(state, seconds, message)
+	info:SetAttribute("State", state)
+	info:SetAttribute("EndsAt", seconds and workspace:GetServerTimeNow() + seconds or 0)
+	info:SetAttribute("Message", message or "")
+end
+setState("Waiting")
+info:SetAttribute("Monster", "")
+info:SetAttribute("HidersLeft", 0)
+
+-- roles are switched by CaveHunt_Players
+local roles = ServerStorage:WaitForChild("CaveHunt_Roles", 30)
+local function setRole(player, role)
+	if roles and player.Parent == Players then
+		local ok, err = pcall(roles.Invoke, roles, player, role)
+		if not ok then
+			warn("[CaveHunt] Couldn't make " .. player.Name .. " a " .. role .. ": " .. tostring(err))
+		end
+	end
+end
+
+local function reward(player, kind) -- coins, from CaveHunt_Shop
+	local r = ServerStorage:FindFirstChild("CaveHunt_Reward")
+	if r then
+		r:Fire(player, kind)
+	end
+end
+
+local function isAlive(player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	return humanoid ~= nil and humanoid.Health > 0
+end
+
+local function hidersLeft()
+	local n = 0
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p:GetAttribute("Role") == "Hider" and isAlive(p) then
+			n += 1
+		end
+	end
+	return n
+end
+
+local function freeze(player, on)
+	local root = player and player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if root then
+		root.Anchored = on
+	end
+end
+
+local function inRound()
+	local state = info:GetAttribute("State")
+	return state == "Starting" or state == "Hiding" or state == "Hunting"
+end
+
+------------------------------------------------------------------ rounds
+local generation = 0 -- goes up whenever a round starts or is stopped, so an older round quietly gives up
+local monster = nil -- this round's monster
+local paused = false -- an admin stopped rounds; they don't start by themselves until ;start
+
+-- spectators and the monster go back to Base Camp as hiders
+local function everyoneHides()
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p:GetAttribute("Role") ~= "Hider" or not isAlive(p) then
+			task.spawn(setRole, p, "Hider")
+		end
+	end
+end
+
+local function runRound(my, chosen)
+	local players = Players:GetPlayers()
+	if #players == 0 then
+		setState("Waiting")
+		return
+	end
+	local m = (chosen and chosen.Parent == Players) and chosen or players[math.random(1, #players)]
+	monster = m
+	info:SetAttribute("Monster", m.DisplayName)
+	setState("Starting", nil, m.DisplayName .. " is the monster!")
+	notify:FireAllClients(m.DisplayName .. " is the monster! Go hide!")
+	for _, p in ipairs(players) do
+		if p ~= m then
+			task.spawn(setRole, p, "Hider") -- everyone else starts at Base Camp
+		end
+	end
+	setRole(m, "Monster") -- the monster starts at one of the lairs
+	if generation ~= my then
+		return
+	end
+
+	-- the monster waits, frozen and blindfolded, while the hiders hide
+	setState("Hiding", HIDE_TIME)
+	local start = os.clock()
+	while os.clock() - start < HIDE_TIME do
+		if generation ~= my then
+			return
+		end
+		freeze(m, os.clock() - start > 1.5) -- let it land first
+		task.wait(0.25)
+	end
+	freeze(m, false)
+
+	setState("Hunting", ROUND_TIME)
+	notify:FireAllClients("The monster is loose!")
+	local hadHiders = hidersLeft() > 0
+	local finishAt = os.clock() + ROUND_TIME
+	local result, winner
+	while not result do
+		if generation ~= my then
+			return
+		end
+		local left = hidersLeft()
+		info:SetAttribute("HidersLeft", left)
+		if m.Parent ~= Players then
+			result, winner = "The monster left the game. Hiders win!", "Hiders"
+		elseif hadHiders and left == 0 then
+			result, winner = m.DisplayName .. " caught everyone. The monster wins!", "Monster"
+		elseif os.clock() >= finishAt then
+			if left > 0 then
+				result, winner = ("Time's up! %d hider%s survived. Hiders win!"):format(left, left == 1 and "" or "s"), "Hiders"
+			else
+				result = "Time's up!"
+			end
+		else
+			task.wait(0.5)
+		end
+	end
+
+	setState("Over", AFTER_ROUND, result)
+	notify:FireAllClients(result)
+	if winner == "Monster" then
+		reward(m, "Win")
+	elseif winner == "Hiders" then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p:GetAttribute("Role") == "Hider" and isAlive(p) then
+				reward(p, "Survive")
+			end
+		end
+	end
+	task.wait(AFTER_ROUND)
+	if generation ~= my then
+		return
+	end
+	monster = nil
+	info:SetAttribute("Monster", "")
+	everyoneHides()
+	setState("Waiting")
+end
+
+local function startRound(chosen)
+	generation += 1
+	paused = false
+	freeze(monster, false)
+	task.spawn(runRound, generation, chosen)
+end
+
+local function stopRound(message)
+	generation += 1
+	paused = true
+	freeze(monster, false)
+	monster = nil
+	info:SetAttribute("Monster", "")
+	everyoneHides()
+	setState("Waiting", nil, message)
+end
+
+-- rounds start by themselves once there are enough players
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if info:GetAttribute("State") == "Waiting" and AUTO_ROUNDS and not paused then
+			if #Players:GetPlayers() >= MIN_PLAYERS then
+				local my = generation
+				setState("Intermission", INTERMISSION)
+				local startAt = os.clock() + INTERMISSION
+				while os.clock() < startAt and generation == my and #Players:GetPlayers() >= MIN_PLAYERS do
+					task.wait(0.5)
+				end
+				if generation == my then
+					if #Players:GetPlayers() >= MIN_PLAYERS then
+						startRound(nil)
+					else
+						setState("Waiting")
+					end
+				end
+			else
+				info:SetAttribute("Message", ("Free play: rounds start when %d players are here"):format(MIN_PLAYERS))
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------------ dying + spectating
+local function onDied(player)
+	local role = player:GetAttribute("Role")
+	local state = info:GetAttribute("State")
+	if role == "Hider" and (state == "Hiding" or state == "Hunting") then
+		notify:FireAllClients(player.DisplayName .. " was caught!")
+		task.wait(2)
+		if player.Parent and player:GetAttribute("Role") == "Hider" and not isAlive(player) then
+			setRole(player, "Spectator")
+			notify:FireClient(player, "You were caught! You're spectating until the round ends.")
+		end
+		return
+	end
+	if role == "Spectator" then
+		return
+	end
+	task.wait(RESPAWN_TIME) -- outside a round, or the monster: come back
+	if player.Parent and not isAlive(player) and player:GetAttribute("Role") == role then
+		setRole(player, role)
+	end
+end
+
+local function watch(player, character)
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	if humanoid and humanoid:IsA("Humanoid") then
+		humanoid.Died:Connect(function()
+			onDied(player)
+		end)
+	end
+end
+
+------------------------------------------------------------------ admin commands
+local function isAdmin(player)
+	if RunService:IsStudio() then
+		return true
+	end
+	for _, who in ipairs(ADMINS) do
+		if who == player.UserId or (type(who) == "string" and who:lower() == player.Name:lower()) then
+			return true
+		end
+	end
+	if game.CreatorType == Enum.CreatorType.Group then
+		local ok, rank = pcall(player.GetRankInGroup, player, game.CreatorId)
+		return ok and rank >= 255
+	end
+	return player.UserId == game.CreatorId
+end
+
+local function findPlayer(text) -- exact name first, then the start of a username or display name
+	text = text:lower()
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Name:lower() == text or p.DisplayName:lower() == text then
+			return p
+		end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Name:lower():sub(1, text:len()) == text or p.DisplayName:lower():sub(1, text:len()) == text then
+			return p
+		end
+	end
+	return nil
+end
+
+local HELP = "Admin: ;restart [name]  ;monster [name]  ;hider [name]  ;spectate [name]  ;end  ;start"
+
+local function command(admin, verb, arg)
+	verb = verb:lower()
+	arg = arg or ""
+	-- the player a command is about: the name given, or you
+	local function target()
+		if arg == "" or arg:lower() == "me" then
+			return admin
+		end
+		local p = findPlayer(arg)
+		if not p then
+			notify:FireClient(admin, "There's nobody called " .. arg .. " here.")
+		end
+		return p
+	end
+
+	if verb == "restart" or verb == "start" or verb == "round" then
+		-- a new round with a random monster, or the one named
+		local chosen = nil
+		if arg ~= "" and arg:lower() ~= "random" then
+			chosen = target()
+			if not chosen then
+				return
+			end
+		end
+		startRound(chosen)
+		notify:FireAllClients(admin.DisplayName .. " started a new round.")
+	elseif verb == "monster" then
+		-- a new round with you (or the one named) as the monster
+		local who = target()
+		if who then
+			startRound(who)
+		end
+	elseif verb == "hider" or verb == "revive" then
+		local who = target()
+		if not who then
+			return
+		end
+		if who == monster and inRound() then
+			-- the monster stepping down: a new round with someone else as the monster
+			local others = {}
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p ~= who then
+					table.insert(others, p)
+				end
+			end
+			if #others > 0 then
+				startRound(others[math.random(1, #others)])
+			else
+				stopRound("Rounds paused by an admin. Use ;start for a new round.")
+			end
+		else
+			task.spawn(setRole, who, "Hider") -- back at Base Camp (brings a caught hider back too)
+		end
+	elseif verb == "spectate" then
+		local who = target()
+		if who == monster and inRound() then
+			notify:FireClient(admin, "The monster can't spectate. Use ;hider to swap the monster.")
+		elseif who then
+			task.spawn(setRole, who, "Spectator")
+		end
+	elseif verb == "end" or verb == "stop" then
+		stopRound("Rounds paused by an admin. Use ;start for a new round.")
+		notify:FireAllClients(admin.DisplayName .. " stopped the round.")
+	else
+		notify:FireClient(admin, HELP)
+	end
+end
+
+adminRemote.OnServerEvent:Connect(function(player, verb, arg)
+	if player:GetAttribute("IsAdmin") and type(verb) == "string" and (arg == nil or type(arg) == "string") then
+		command(player, verb, arg)
+	end
+end)
+
+------------------------------------------------------------------ joining
+local function onPlayer(player)
+	player:SetAttribute("IsAdmin", isAdmin(player))
+	player.CharacterAdded:Connect(function(character)
+		watch(player, character)
+	end)
+	if player.Character then
+		task.spawn(watch, player, player.Character)
+	end
+	player.Chatted:Connect(function(message)
+		local verb, arg = message:match("^[;/](%a+)%s*(.-)%s*$")
+		if verb and player:GetAttribute("IsAdmin") then
+			command(player, verb, arg)
+		end
+	end)
+	if inRound() then
+		player:SetAttribute("Role", "Spectator") -- joins in when the round is over
+	elseif not player.Character then
+		task.spawn(setRole, player, "Hider")
+	end
+end
+Players.PlayerAdded:Connect(onPlayer)
+for _, player in ipairs(Players:GetPlayers()) do
+	onPlayer(player)
+end
+Players.PlayerRemoving:Connect(function(player)
+	if player == monster then
+		monster = nil
+	end
+end)
+]==]
+
 SOURCES.Client = [==[
 -- CaveHunt client: role + shop buttons, flashlight controls, the cave mood, flickering lights.
 local Players = game:GetService("Players")
@@ -1255,36 +1671,289 @@ local function isMonster()
 	return player:GetAttribute("Role") == "Monster"
 end
 
--- "Play as Monster" / "Play as Hider" button (for testing until there's a round system)
+-- small UI helpers
+local function round(obj, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = obj
+end
+local function make(className, parent, props)
+	local t = Instance.new(className)
+	t.BackgroundTransparency = 1
+	if className:find("^Text") then
+		t.TextColor3 = Color3.fromRGB(235, 235, 240)
+		t.Font = Enum.Font.GothamBold
+		t.TextSize = 16
+	end
+	for k, v in pairs(props) do
+		t[k] = v
+	end
+	t.Parent = parent
+	return t
+end
+local function clock(seconds)
+	return ("%d:%02d"):format(math.floor(seconds / 60), seconds % 60)
+end
+
+-- The round timer at the top of the screen, the monster's blindfold while the hiders hide,
+-- and the result when a round ends
 task.spawn(function()
-	local setRole = ReplicatedStorage:WaitForChild("CaveHunt_SetRole", 30)
-	if not setRole then
+	local info = ReplicatedStorage:WaitForChild("CaveHunt_Round", 30)
+	if not info then
 		return
 	end
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "CaveHunt_UI"
-	gui.ResetOnSpawn = false
-	gui.Parent = player:WaitForChild("PlayerGui")
-	local button = Instance.new("TextButton")
-	button.AnchorPoint = Vector2.new(1, 0)
-	button.Position = UDim2.new(1, -16, 0, 16)
-	button.Size = UDim2.fromOffset(170, 40)
-	button.BackgroundColor3 = Color3.fromRGB(40, 12, 12)
-	button.BackgroundTransparency = 0.15
-	button.TextColor3 = Color3.fromRGB(255, 222, 210)
-	button.Font = Enum.Font.GothamBold
-	button.TextSize = 16
-	button.Parent = gui
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = button
-	local function refresh()
-		button.Text = isMonster() and "Play as Hider" or "Play as Monster"
+	local playerGui = player:WaitForChild("PlayerGui")
+	local blindGui = make("ScreenGui", playerGui, { Name = "CaveHunt_Blindfold", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 4 })
+	local blind = make("Frame", blindGui, { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 0, BackgroundColor3 = Color3.new(0, 0, 0), Visible = false })
+	local blindText = make("TextLabel", blind, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(600, 120),
+		TextSize = 30,
+		TextColor3 = Color3.fromRGB(255, 80, 70),
+	})
+	local gui = make("ScreenGui", playerGui, { Name = "CaveHunt_Round", ResetOnSpawn = false, DisplayOrder = 5 })
+	local bar = make("TextLabel", gui, {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 12),
+		Size = UDim2.fromOffset(0, 36),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 0.25,
+		BackgroundColor3 = Color3.fromRGB(12, 12, 16),
+		TextSize = 18,
+	})
+	round(bar, 8)
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 14), UDim.new(0, 14)
+	pad.Parent = bar
+	local result = make("TextLabel", gui, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.3),
+		Size = UDim2.fromOffset(700, 60),
+		TextSize = 34,
+		Font = Enum.Font.GothamBlack,
+		TextColor3 = Color3.fromRGB(255, 225, 140),
+		TextStrokeTransparency = 0.4,
+		Visible = false,
+	})
+	while true do
+		local state = info:GetAttribute("State") or "Waiting"
+		local left = math.max(0, math.ceil((info:GetAttribute("EndsAt") or 0) - workspace:GetServerTimeNow()))
+		local monsterName = info:GetAttribute("Monster") or ""
+		local message = info:GetAttribute("Message") or ""
+		local text
+		if state == "Hiding" then
+			text = isMonster() and "You're the monster. Wait..." or ("Hide! %s comes out in %s"):format(monsterName, clock(left))
+		elseif state == "Hunting" then
+			local n = info:GetAttribute("HidersLeft") or 0
+			text = ("%s is hunting   |   %d hider%s left   |   %s"):format(monsterName, n, n == 1 and "" or "s", clock(left))
+		elseif state == "Intermission" then
+			text = "Next round in " .. clock(left)
+		else
+			text = message ~= "" and message or "Free play"
+		end
+		bar.Text = text
+		blind.Visible = state == "Hiding" and isMonster()
+		blindText.Text = ("You're the monster.\nThe hiders are hiding... %d"):format(left)
+		result.Visible = state == "Over"
+		result.Text = message
+		task.wait(0.2)
 	end
-	refresh()
-	player:GetAttributeChangedSignal("Role"):Connect(refresh)
-	button.Activated:Connect(function()
-		setRole:FireServer(isMonster() and "Hider" or "Monster")
+end)
+
+-- Spectate mode: once you're caught you watch the others until the round ends.
+-- The arrows at the bottom of the screen (or Q and E) switch who you're watching.
+task.spawn(function()
+	local camera = workspace.CurrentCamera
+	local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), { Name = "CaveHunt_Spectate", ResetOnSpawn = false, Enabled = false })
+	local frame = make("Frame", gui, {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -110),
+		Size = UDim2.fromOffset(420, 48),
+		BackgroundTransparency = 0.2,
+		BackgroundColor3 = Color3.fromRGB(12, 12, 16),
+	})
+	round(frame, 10)
+	local label = make("TextLabel", frame, { Position = UDim2.fromOffset(52, 0), Size = UDim2.new(1, -104, 1, 0), TextSize = 17 })
+	local prev = make("TextButton", frame, { Text = "<", Position = UDim2.fromOffset(6, 6), Size = UDim2.fromOffset(40, 36), BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(40, 40, 52), TextSize = 22 })
+	local nxt = make("TextButton", frame, { Text = ">", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 6), Size = UDim2.fromOffset(40, 36), BackgroundTransparency = 0, BackgroundColor3 = Color3.fromRGB(40, 40, 52), TextSize = 22 })
+	round(prev, 6)
+	round(nxt, 6)
+
+	local watching
+	local function humanoidOf(other)
+		local humanoid = other.Character and other.Character:FindFirstChildOfClass("Humanoid")
+		local role = other:GetAttribute("Role")
+		if humanoid and humanoid.Health > 0 and (role == "Hider" or role == "Monster") then
+			return humanoid
+		end
+		return nil
+	end
+	local function watch(step)
+		local list = {}
+		for _, other in ipairs(Players:GetPlayers()) do
+			if other ~= player and humanoidOf(other) then
+				table.insert(list, other)
+			end
+		end
+		table.sort(list, function(a, b)
+			return a.Name < b.Name
+		end)
+		local i = table.find(list, watching)
+		if not i then
+			i = 1
+		elseif step ~= 0 then
+			i = (i - 1 + step) % #list + 1
+		end
+		watching = list[i]
+		if watching then
+			camera.CameraType = Enum.CameraType.Custom
+			camera.CameraSubject = humanoidOf(watching)
+			local what = watching:GetAttribute("Role") == "Monster" and "the monster" or (watching:GetAttribute("Hidden") and "hiding" or "hider")
+			label.Text = ("Spectating %s (%s)"):format(watching.DisplayName, what)
+		else
+			label.Text = "Spectating: nobody left to watch"
+		end
+	end
+	prev.Activated:Connect(function()
+		watch(-1)
+	end)
+	nxt.Activated:Connect(function()
+		watch(1)
+	end)
+
+	local spectating = false
+	local function update()
+		local now = player:GetAttribute("Role") == "Spectator"
+		if now ~= spectating then
+			spectating = now
+			gui.Enabled = now
+			watching = nil
+			if now then
+				ContextActionService:BindAction("CaveHunt_SpectatePrev", function(_, state)
+					if state == Enum.UserInputState.Begin then
+						watch(-1)
+					end
+					return Enum.ContextActionResult.Sink
+				end, false, Enum.KeyCode.Q, Enum.KeyCode.ButtonL1)
+				ContextActionService:BindAction("CaveHunt_SpectateNext", function(_, state)
+					if state == Enum.UserInputState.Begin then
+						watch(1)
+					end
+					return Enum.ContextActionResult.Sink
+				end, false, Enum.KeyCode.E, Enum.KeyCode.ButtonR1)
+				watch(0)
+			else
+				ContextActionService:UnbindAction("CaveHunt_SpectatePrev")
+				ContextActionService:UnbindAction("CaveHunt_SpectateNext")
+			end
+		end
+		if spectating then
+			local humanoid = watching and humanoidOf(watching)
+			if not humanoid then
+				watch(0) -- they were caught or left: watch someone else
+			elseif camera.CameraSubject ~= humanoid then
+				camera.CameraSubject = humanoid
+			end
+		end
+	end
+	player:GetAttributeChangedSignal("Role"):Connect(update)
+	while true do
+		update()
+		task.wait(0.3)
+	end
+end)
+
+-- The Admin panel (admins only: everyone in Studio, the game's owner, and ADMINS in CaveHunt_Rounds).
+-- The same things work as chat commands: ;restart ;monster ;hider ;spectate ;end ;start
+task.spawn(function()
+	local admin = ReplicatedStorage:WaitForChild("CaveHunt_Admin", 30)
+	if not admin then
+		return
+	end
+	while not player:GetAttribute("IsAdmin") do
+		player:GetAttributeChangedSignal("IsAdmin"):Wait()
+	end
+	local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), { Name = "CaveHunt_AdminUI", ResetOnSpawn = false })
+	local open = make("TextButton", gui, {
+		Text = "Admin",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -16, 0, 60),
+		Size = UDim2.fromOffset(170, 36),
+		BackgroundTransparency = 0.15,
+		BackgroundColor3 = Color3.fromRGB(40, 12, 12),
+		TextColor3 = Color3.fromRGB(255, 222, 210),
+	})
+	round(open, 8)
+	local panel = make("Frame", gui, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -16, 0, 104),
+		Size = UDim2.fromOffset(250, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 0.05,
+		BackgroundColor3 = Color3.fromRGB(16, 16, 22),
+		Visible = false,
+	})
+	round(panel, 10)
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 8), UDim.new(0, 8)
+	pad.Parent = panel
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = panel
+
+	local order = 0
+	local function add(text, color, onClick)
+		order += 1
+		local b = make(onClick and "TextButton" or "TextLabel", panel, {
+			Text = text,
+			Size = UDim2.new(1, 0, 0, onClick and 32 or 22),
+			BackgroundTransparency = onClick and 0 or 1,
+			BackgroundColor3 = color or Color3.fromRGB(40, 40, 52),
+			TextSize = onClick and 15 or 13,
+			TextWrapped = true,
+			LayoutOrder = order,
+		})
+		if onClick then
+			round(b, 6)
+			b.Activated:Connect(onClick)
+		end
+		return b
+	end
+	local function send(verb, arg)
+		return function()
+			admin:FireServer(verb, arg)
+		end
+	end
+	add("Restart round (random monster)", Color3.fromRGB(46, 100, 60), send("restart"))
+	add("Make me the monster", Color3.fromRGB(110, 30, 30), send("monster"))
+	add("Make me a hider", nil, send("hider"))
+	add("Spectate", nil, send("spectate"))
+	add("Stop rounds", nil, send("end"))
+	add("Make someone the monster:")
+	local first = order
+	local playerButtons = {}
+	local function refreshPlayers()
+		for _, b in ipairs(playerButtons) do
+			b:Destroy()
+		end
+		playerButtons = {}
+		order = first
+		for _, other in ipairs(Players:GetPlayers()) do
+			table.insert(playerButtons, add(other.DisplayName, Color3.fromRGB(70, 30, 30), send("monster", other.Name)))
+		end
+		local help = add("Chat: ;restart [name]  ;monster [name]  ;hider [name]  ;spectate [name]  ;end  ;start")
+		help.TextColor3 = Color3.fromRGB(160, 165, 180)
+		help.Size = UDim2.new(1, 0, 0, 36)
+		table.insert(playerButtons, help)
+	end
+	open.Activated:Connect(function()
+		panel.Visible = not panel.Visible
+		if panel.Visible then
+			refreshPlayers()
+		end
 	end)
 end)
 
@@ -1377,27 +2046,9 @@ task.spawn(function()
 	gui.ResetOnSpawn = false
 	gui.Parent = player:WaitForChild("PlayerGui")
 
-	local function round(obj, radius)
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, radius)
-		c.Parent = obj
-	end
-	local function make(className, parent, props)
-		local t = Instance.new(className)
-		t.BackgroundTransparency = 1
-		t.TextColor3 = Color3.fromRGB(235, 235, 240)
-		t.Font = Enum.Font.GothamBold
-		t.TextSize = 16
-		for k, v in pairs(props) do
-			t[k] = v
-		end
-		t.Parent = parent
-		return t
-	end
-
 	local open = make("TextButton", gui, {
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -16, 0, 64),
+		Position = UDim2.new(1, -16, 0, 16),
 		Size = UDim2.fromOffset(170, 36),
 		BackgroundTransparency = 0.15,
 		BackgroundColor3 = Color3.fromRGB(60, 46, 10),
@@ -1678,9 +2329,10 @@ task.spawn(function()
 		local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		local center = cave and cave:GetAttribute("BoxCenter")
 		local size = cave and cave:GetAttribute("BoxSize")
+		local at = root and root.Position or workspace.CurrentCamera.Focus.Position -- spectators: where the camera is looking
 		local now = false
-		if root and center and size then
-			local d = root.Position - center
+		if center and size then
+			local d = at - center
 			now = math.abs(d.X) < size.X / 2 and math.abs(d.Y) < size.Y / 2 and math.abs(d.Z) < size.Z / 2
 		end
 		if now ~= inCave then
@@ -1839,7 +2491,7 @@ local function pickPlayer(title, wanted, onPick)
 end
 
 local function otherHider(other)
-	return other:GetAttribute("Role") ~= "Monster"
+	return other:GetAttribute("Role") == "Hider" and other.Character ~= nil
 end
 ]==]
 
@@ -2116,13 +2768,14 @@ local function run()
 		install(ServerScriptService, "Script", "CaveHunt_Players", SOURCES.Players)
 		install(ServerScriptService, "Script", "CaveHunt_Hiding", SOURCES.Hiding)
 		install(ServerScriptService, "Script", "CaveHunt_Shop", SOURCES.Shop)
+		install(ServerScriptService, "Script", "CaveHunt_Rounds", SOURCES.Rounds)
 		install(playerScripts, "LocalScript", "CaveHunt_Client", SOURCES.Client)
 	end)
 	if not ok then
 		warn("[GameScripts] Something went wrong. Copy this message and send it to Claude:\n" .. tostring(err))
 		return false
 	end
-	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities (button in the top-right corner), the troll shop (Shop button or B, coins on the leaderboard), and the cave mood. Press Play to try them.")
+	print("[GameScripts] Installed: same-size hiders with their own heads, flashlights (F), hiding (E), phones, the monster and its abilities, rounds with spectating, admin commands (Admin button or ;help in chat), the troll shop (Shop button or B), and the cave mood. Press Play to try them.")
 	return true
 end
 
