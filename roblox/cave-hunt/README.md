@@ -93,7 +93,8 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 **The monster**
 - **Spawn:** at the far end of the Great Cavern, the Old Mine or the Crystal Grotto.
 - **Size:** 10 studs tall, twice a hider (`MONSTER_HEIGHT`). It fits through every tunnel and nook, but not the shack doors (7.5 studs) or doors in your own buildings that are sized for normal players. It can still punch through a doorway and search hiding spots through walls.
-- **Speed:** walks at 20 and sprints at 30, against the hiders' 16 and 24. It has more stamina than a hider.
+- **Speed:** walks at 20 and sprints at 30, against the hiders' 16 and 26. It has more stamina than a hider.
+- **Shrink:** **C** (B on a gamepad, the Shrink button on a phone). The monster shrinks to half its size and gets faster (walks at 26, sprints at 36), so it can chase through small gaps. Press **C** again to grow back. If there's no room above it (say, in a low tunnel), it stays small and tells you so. Change it with `SHRINK_SCALE` / `SHRUNK_SPEEDS` at the top of `CaveHunt_Players`.
 - **Punching:** **click** (R2 on a gamepad, the Hit button on a phone). It hits the closest hider in front of it, within reach (bigger monsters reach further), never through a wall. One punch catches them. Once a second.
   - **Hiding spots:** hitting a hiding spot with someone inside catches them too. **E** ("Search") just pulls them out.
   - **What it looks like:** the monster's arm swings up by turning its shoulder joint. That works on any rig, with no animation file needed. Three red claw marks flash in front of it, with a swing sound and a thud on a hit.
@@ -102,10 +103,13 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Searching:** pressing **E** ("Search") on a hiding spot throws whoever is inside out.
 - **Vision:** no flashlight. Instead it has bright green night vision that shows the whole cave, plus a light around the monster that only the monster sees. **N** switches it off and on (off is a dim red view).
 - **Hotbar abilities:**
-  1. **Leap** (6s): a big lunge forward and up.
-  2. **Sense** (15s): for 4 seconds, a red smudge on a ring round the middle of the screen hints which way each hider is. It's rough, give or take 25 degrees, and doesn't show exactly where they are. Closer hiders give a bigger, brighter smudge.
-  3. **Scent** (20s): for 8 seconds, a glowing trail shows where each hider walked in the last 30 seconds.
-  4. **Roar** (25s): hiders within 140 studs get their screen shaken and their lights knocked out for 5 seconds.
+  1. **Leap** (6s): a big jump up and forward.
+  2. **Lunge** (5s): a low, fast pounce about 40 studs straight ahead, the way you're looking. As it lands, the monster swipes, so it catches a hider it lands on (set `SWIPE = false` in the Lunge tool's script to just jump).
+  3. **Sense** (15s): for 4 seconds, a red smudge on a ring round the middle of the screen hints which way each hider is. It's rough, give or take 25 degrees, and doesn't show exactly where they are. Closer hiders give a bigger, brighter smudge.
+  4. **Scent** (20s): for 8 seconds, a glowing trail shows where each hider walked in the last 30 seconds.
+  5. **Roar** (25s): a long growl. Hiders within 140 studs get their screen shaken for 3 seconds and their flashlight dies for 12 seconds. **F** can't switch it back on until then.
+  6. **Cry** (75s): a 10-second wail that rises and falls and is heard much further away. Hiders within 260 studs get a 9-second shake and their flashlight dies for 35 seconds.
+  - **Changing them:** the `ROAR` and `CRY` settings at the top of `CaveHunt_Players` set range, how long each part lasts, and the recharge. If you change a recharge, change the number in that tool's `cooldown(...)` too.
 - **Look: your monster model.** `GameScripts` looks in Workspace for it: a model with "monster" in its name, or else a character model (one with a `Humanoid`, like your Smiler). It moves the model to **ServerStorage** and says so in the Output. To pick a different one, put it in ServerStorage, name it `Monster`, and run the command again.
   - **A rigged character** (`Humanoid` + `HumanoidRootPart`): whoever is the monster plays as it.
     - Its own scripts (AI, chasing) are switched off.
@@ -118,21 +122,21 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Sprint:** hold **Shift**. If you're crouching, it stands you up.
   - **Stamina:** shown by the curved meter in the top-left corner. It refills a second after you stop.
   - **Running out:** once it's empty, you have to wait until it's back to 20% before you can run again.
-- **Crouch / sneak:** press **C**. Half speed, lower camera, and your steps are almost silent. Press it again to stand up.
+- **Crouch / sneak (hiders):** press **C**. Half speed, lower camera, and your steps are almost silent. Press it again to stand up. For the monster, **C** is Shrink instead.
 - **Gamepad and phone:** L3 / B on a gamepad, Run / Crouch buttons on a phone.
 - **Crouch animation:** there isn't one built in, because Roblox only plays animations you own. Make one in the Animation Editor and put its ID in `CROUCH_ANIMATION` at the top of `StarterPlayerScripts.CaveHunt_Client`.
 
-| Speed | Hiders | Monster |
-| --- | --- | --- |
-| Walk | 16 | 20 |
-| Sprint (Shift) | 26 | 30 |
-| Crouch (C) | 8 | 10 |
-| Stamina | runs out after about 5 s | runs out after about 7 s |
+| Speed | Hiders | Monster | Monster, shrunk (C) |
+| --- | --- | --- | --- |
+| Walk | 16 | 20 | 26 |
+| Sprint (Shift) | 26 | 30 | 36 |
+| Crouch (C) | 8 | (C shrinks) | |
+| Stamina | runs out after about 5 s | runs out after about 7 s | same |
 
-Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` at the top of `ServerScriptService.CaveHunt_Players`, and stamina with `STAMINA_DRAIN` / `STAMINA_REGEN` in `CaveHunt_Client`. Shift lock is turned off, because Shift is sprint.
+Change the speeds with `HIDER_SPEEDS` / `MONSTER_SPEEDS` / `SHRUNK_SPEEDS` at the top of `ServerScriptService.CaveHunt_Players`, and stamina with `STAMINA_DRAIN` / `STAMINA_REGEN` in `CaveHunt_Client`. Shift lock is turned off, because Shift is sprint.
 
 **The HUD** (like Lethal Company)
-- **Top-left: your suit.** A small figure with a curved stamina meter round it. The meter turns red when you're nearly out. The figure crouches with you, and it shows HIDDEN, CROUCHING or RUNNING. It's red for the monster.
+- **Top-left: your suit.** A small figure with a curved stamina meter round it. The meter turns red when you're nearly out. The figure crouches with you (or shrinks with the monster), and it shows HIDDEN, CROUCHING or RUNNING. It's red for the monster.
 - **Top: a compass** that turns with you (north is -Z).
 - **Top-right: your controls.** They change for hiders, the monster and spectators.
 

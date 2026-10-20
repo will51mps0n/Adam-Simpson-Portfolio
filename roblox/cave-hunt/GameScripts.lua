@@ -20,8 +20,9 @@
 	  ServerStorage.CaveHunt_Tools
 	      the hotbar items. Hiders get a Phone (ring another hider: their
 	      phone rings out loud and flashes, even inside a closet). The
-	      monster gets Leap, Sense (see hiders through walls), Scent (see
-	      where hiders walked) and Roar (shake hiders, knock out their lights).
+	      monster gets Leap, Lunge (pounce forward and swipe), Sense (which way
+	      the hiders are), Scent (see where hiders walked), Roar and Cry (shake
+	      hiders, knock out their flashlights; the Cry lasts much longer).
 	      Picking an item uses it; its slot counts down while it recharges.
 	      The shop's troll items live here too (Price and Who attributes)
 	  ServerScriptService.CaveHunt_Shop
@@ -61,8 +62,13 @@ local MONSTER_SCALE = 1.9 -- the built-in monster (your own character in black) 
 local PUNCH_COOLDOWN = 1 -- seconds between the monster's punches
 local PUNCH_REACH = 5 -- studs in front of the monster, on top of its own size
 local LIGHT = Color3.fromRGB(255, 238, 210)
-local ROAR_COOLDOWN = 25
-local ROAR_RANGE = 140
+-- the monster's Roar and Cry: hiders within range get a shaking screen and a dead flashlight.
+-- lightsOut / shake / sound are how many seconds each lasts
+local ROAR = { cooldown = 25, range = 140, lightsOut = 12, shake = 3, sound = 3.5 }
+local CRY = { cooldown = 75, range = 260, lightsOut = 35, shake = 9, sound = 10 }
+-- C makes the monster shrink to this much of its size and move at these speeds; C again grows it back
+local SHRINK_SCALE = 0.5
+local SHRUNK_SPEEDS = { walk = 26, sprint = 36, crouch = 26 }
 -- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
 local ROAR_SOUND = "rbxasset://sounds/uuhhh.mp3"
 local PUNCH_SOUND = "rbxasset://sounds/action_jump.mp3" -- (the old built-in swoosh.wav is blocked by Roblox now)
@@ -81,11 +87,12 @@ local toggleLight = remote("CaveHunt_ToggleFlashlight")
 local roarRemote = remote("CaveHunt_Roar")
 local punchRemote = remote("CaveHunt_Punch")
 local shakeRemote = remote("CaveHunt_Shake")
+local shrinkRemote = remote("CaveHunt_Shrink")
 local Debris = game:GetService("Debris")
 
 -- hotbar items: Tools that GameScripts keeps in ServerStorage.CaveHunt_Tools
 local HIDER_TOOLS = { "Flashlight", "Phone" }
-local MONSTER_TOOLS = { "Leap", "Sense", "Scent", "Roar" }
+local MONSTER_TOOLS = { "Leap", "Lunge", "Sense", "Scent", "Roar", "Cry" }
 local function giveTools(player, names)
 	local templates = ServerStorage:FindFirstChild("CaveHunt_Tools")
 	local backpack = player:FindFirstChildOfClass("Backpack")
@@ -251,6 +258,14 @@ toggleLight.OnServerEvent:Connect(function(player)
 	local mount = head and head:FindFirstChild("Flashlight")
 	if mount and not player:GetAttribute("Hidden") then
 		local on = not mount.Beam.Enabled
+		local deadFor = (player:GetAttribute("LightsOutUntil") or 0) - workspace:GetServerTimeNow()
+		if on and deadFor > 0 then -- the monster's roar or cry knocked it out
+			local notify = ReplicatedStorage:FindFirstChild("CaveHunt_Notify")
+			if notify then
+				notify:FireClient(player, ("Your flashlight is dead for %ds more"):format(math.ceil(deadFor)))
+			end
+			return
+		end
 		for _, holder in ipairs({ mount, head:FindFirstChild("FlashlightGround") }) do
 			for _, light in ipairs(holder:GetChildren()) do
 				if light:IsA("Light") then
@@ -645,47 +660,148 @@ roles.OnInvoke = function(player, role)
 end
 roles.Parent = ServerStorage
 
------------------------------------------------------------------- the monster's roar
--- shakes nearby hiders' screens and knocks out their lights for 5 seconds
-local lastRoar = {}
-roarRemote.OnServerEvent:Connect(function(player)
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if player:GetAttribute("Role") ~= "Monster" or not root or os.clock() - (lastRoar[player] or -math.huge) < ROAR_COOLDOWN - 1 then
-		return
+------------------------------------------------------------------ the monster's roar and cry
+-- Hiders in range get a shaking screen and their flashlight goes dead for a while (F can't switch it
+-- back on until then). The Cry reaches further and lasts much longer, but takes longer to come back.
+local dimmed = {} -- [player] = { [light] = true } lights we switched off, to switch back on later
+
+local function restoreLights(player)
+	local lights = dimmed[player]
+	if not lights or player:GetAttribute("Hidden") then
+		return -- hiding keeps lights off; they come back when the hider leaves the spot
 	end
-	lastRoar[player] = os.clock()
-	local sound = Instance.new("Sound")
-	sound.SoundId = ROAR_SOUND
-	sound.PlaybackSpeed = 0.35
-	sound.Volume = 3
-	sound.RollOffMaxDistance = 400
-	sound.Parent = root
-	sound:Play()
-	Debris:AddItem(sound, 8)
-	for _, other in ipairs(Players:GetPlayers()) do
-		local character = other.Character
-		local otherRoot = character and character:FindFirstChild("HumanoidRootPart")
-		if other ~= player and other:GetAttribute("Role") ~= "Monster" and otherRoot and (otherRoot.Position - root.Position).Magnitude < ROAR_RANGE then
-			shakeRemote:FireClient(other)
-			local wasOn = {}
-			for _, light in ipairs(character:GetDescendants()) do
-				if light:IsA("Light") and light.Enabled then
-					wasOn[light] = true
-					light.Enabled = false
-				end
-			end
-			task.delay(5, function()
-				if other:GetAttribute("Hidden") then
-					return -- hiding keeps lights off; they come back when they leave the spot
-				end
-				for light in pairs(wasOn) do
-					if light.Parent then
-						light.Enabled = true
-					end
-				end
-			end)
+	dimmed[player] = nil
+	for light in pairs(lights) do
+		if light.Parent then
+			light.Enabled = true
 		end
 	end
+end
+
+local function lightsOut(player, seconds)
+	local character = player.Character
+	if not character then
+		return
+	end
+	local untilTime = math.max(player:GetAttribute("LightsOutUntil") or 0, workspace:GetServerTimeNow() + seconds)
+	player:SetAttribute("LightsOutUntil", untilTime)
+	local lights = dimmed[player] or {}
+	dimmed[player] = lights
+	for _, light in ipairs(character:GetDescendants()) do
+		if light:IsA("Light") and light.Enabled then
+			lights[light] = true
+			light.Enabled = false
+		end
+	end
+	task.delay(seconds, function()
+		if (player:GetAttribute("LightsOutUntil") or 0) > workspace:GetServerTimeNow() + 0.1 then
+			return -- a later roar or cry is still going
+		end
+		player:SetAttribute("LightsOutUntil", nil)
+		restoreLights(player)
+	end)
+end
+
+local lastRoar = {}
+roarRemote.OnServerEvent:Connect(function(player, kind)
+	local which = kind == "Cry" and "Cry" or "Roar"
+	local settings = which == "Cry" and CRY or ROAR
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	lastRoar[player] = lastRoar[player] or {}
+	if player:GetAttribute("Role") ~= "Monster" or not root or os.clock() - (lastRoar[player][which] or -math.huge) < settings.cooldown - 1 then
+		return
+	end
+	lastRoar[player][which] = os.clock()
+	local sound = Instance.new("Sound")
+	sound.SoundId = ROAR_SOUND
+	sound.PlaybackSpeed = which == "Cry" and 0.6 or 0.35
+	sound.Volume = 3
+	sound.Looped = true
+	sound.RollOffMaxDistance = which == "Cry" and 700 or 400
+	sound.Parent = root
+	sound:Play()
+	if which == "Cry" then -- a wail that rises and falls
+		TweenService:Create(sound, TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { PlaybackSpeed = 0.85 }):Play()
+	end
+	task.delay(settings.sound - 0.8, function()
+		TweenService:Create(sound, TweenInfo.new(0.8), { Volume = 0 }):Play()
+	end)
+	Debris:AddItem(sound, settings.sound)
+	local message = which == "Cry"
+			and ("The monster let out a long cry... your flashlight is dead for %ds"):format(settings.lightsOut)
+		or ("The monster roared! Your flashlight is out for %ds"):format(settings.lightsOut)
+	for _, other in ipairs(Players:GetPlayers()) do
+		local otherRoot = other.Character and other.Character:FindFirstChild("HumanoidRootPart")
+		if other ~= player and other:GetAttribute("Role") ~= "Monster" and otherRoot and (otherRoot.Position - root.Position).Magnitude < settings.range then
+			shakeRemote:FireClient(other, message, settings.shake, which == "Cry" and 0.6 or 1.2)
+			lightsOut(other, settings.lightsOut)
+		end
+	end
+end)
+
+------------------------------------------------------------------ the monster's shrink (C)
+-- half the size (fits through smaller gaps) and faster; C again grows it back, if there's room above
+local lastShrink = {}
+local function bottomOf(character)
+	local box, size = character:GetBoundingBox()
+	return box.Position.Y - size.Y / 2
+end
+
+local function resize(character, scale)
+	local before = bottomOf(character)
+	character:ScaleTo(scale)
+	character:PivotTo(character:GetPivot() + Vector3.new(0, before - bottomOf(character) + 0.05, 0)) -- feet stay on the floor
+end
+
+local function roomToGrow(character, scale)
+	local height = character:GetExtentsSize().Y * scale / character:GetScale()
+	local box, size = character:GetBoundingBox()
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	local bottom = box.Position - Vector3.new(0, size.Y / 2 - 0.5, 0)
+	local side = math.min(size.X, size.Z) * 0.3
+	for _, offset in ipairs({ Vector3.new(), Vector3.new(side, 0, 0), Vector3.new(-side, 0, 0), Vector3.new(0, 0, side), Vector3.new(0, 0, -side) }) do
+		if workspace:Raycast(bottom + offset, Vector3.new(0, height, 0), params) then
+			return false
+		end
+	end
+	return true
+end
+
+shrinkRemote.OnServerEvent:Connect(function(player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if player:GetAttribute("Role") ~= "Monster" or not humanoid or humanoid.Health <= 0 or os.clock() - (lastShrink[player] or 0) < 0.6 then
+		return
+	end
+	lastShrink[player] = os.clock()
+	local shrunk = character:GetAttribute("Shrunk")
+	local full = character:GetAttribute("FullScale") or character:GetScale()
+	local from = character:GetScale()
+	local to = shrunk and full or full * SHRINK_SCALE
+	if shrunk and not roomToGrow(character, to) then
+		local notify = ReplicatedStorage:FindFirstChild("CaveHunt_Notify")
+		if notify then
+			notify:FireClient(player, "No room to grow back here")
+		end
+		return
+	end
+	character:SetAttribute("FullScale", full)
+	character:SetAttribute("Shrunk", not shrunk or nil)
+	playSound(character:FindFirstChild("HumanoidRootPart") or character, PUNCH_SOUND, shrunk and 0.6 or 1.6, 1.5)
+	local ok, err = pcall(function()
+		for step = 1, 5 do -- quickly, not in one jump
+			resize(character, from + (to - from) * step / 5)
+			task.wait(0.04)
+		end
+	end)
+	if not ok then
+		warn("[CaveHunt] Couldn't resize the monster: " .. tostring(err))
+	end
+	setSpeeds(character, shrunk and MONSTER_SPEEDS or SHRUNK_SPEEDS)
+	character:SetAttribute("Reach", PUNCH_REACH + character:GetExtentsSize().Y * 0.3)
+	player.CameraMinZoomDistance = math.max(8, character:GetExtentsSize().Y * 1.1)
 end)
 
 ------------------------------------------------------------------ joining + respawning
@@ -700,10 +816,26 @@ local function onPlayer(player)
 		end
 	end)
 	player.CharacterAdded:Connect(function(character)
+		dimmed[player] = nil -- a new body starts with working lights
+		player:SetAttribute("LightsOutUntil", nil)
 		-- the monster respawning after dying comes back as the monster
 		if player:GetAttribute("Role") == "Monster" and not converting[player] and not character:GetAttribute("IsMonster") then
 			task.defer(becomeMonster, player)
 		end
+	end)
+	-- coming out of a hiding spot gives your lights back, unless a roar or cry still has them out
+	player:GetAttributeChangedSignal("Hidden"):Connect(function()
+		if player:GetAttribute("Hidden") then
+			return
+		end
+		task.defer(function()
+			local left = (player:GetAttribute("LightsOutUntil") or 0) - workspace:GetServerTimeNow()
+			if left > 0 then
+				lightsOut(player, left)
+			else
+				restoreLights(player)
+			end
+		end)
 	end)
 	if player.Character and player:HasAppearanceLoaded() and player:GetAttribute("Role") == "Hider" then
 		task.spawn(setupHider, player, player.Character)
@@ -717,6 +849,8 @@ Players.PlayerRemoving:Connect(function(player)
 	looks[player] = nil
 	converting[player] = nil
 	lastRoar[player] = nil
+	lastShrink[player] = nil
+	dimmed[player] = nil
 	lastPunch[player] = nil
 	lastAim[player] = nil
 end)
@@ -2093,11 +2227,22 @@ end, true, Enum.ContextActionPriority.High.Value, Enum.KeyCode.LeftShift, Enum.K
 ContextActionService:SetTitle("CaveHunt_Sprint", "Run")
 ContextActionService:BindAction("CaveHunt_Crouch", function(_, state)
 	if state == Enum.UserInputState.Begin then
-		setCrouch(not move.crouching)
+		if isMonster() then -- the monster shrinks instead (half the size and faster), C again grows back
+			local shrink = ReplicatedStorage:FindFirstChild("CaveHunt_Shrink")
+			if shrink then
+				shrink:FireServer()
+			end
+		else
+			setCrouch(not move.crouching)
+		end
 	end
 	return Enum.ContextActionResult.Sink
 end, true, Enum.KeyCode.C, Enum.KeyCode.ButtonB)
-ContextActionService:SetTitle("CaveHunt_Crouch", "Crouch")
+local function crouchTitle()
+	ContextActionService:SetTitle("CaveHunt_Crouch", isMonster() and "Shrink" or "Crouch")
+end
+player:GetAttributeChangedSignal("Role"):Connect(crouchTitle)
+crouchTitle()
 player.CharacterAdded:Connect(function()
 	move.stamina = 100
 	setCrouch(false)
@@ -2218,7 +2363,7 @@ task.spawn(function()
 	})
 	local CONTROLS = {
 		Hider = "Flashlight : [F]\nSprint : [Shift]\nCrouch : [C]\nHide : [E]\nShop : [B]",
-		Monster = "Punch : [LMB]\nSprint : [Shift]\nCrouch : [C]\nSearch : [E]\nNight vision : [N]\nAbilities : [1-4]",
+		Monster = "Punch : [LMB]\nSprint : [Shift]\nShrink : [C]\nSearch : [E]\nNight vision : [N]\nAbilities : [1-6]",
 		Spectator = "Next : [E]\nPrevious : [Q]",
 	}
 
@@ -2229,7 +2374,8 @@ task.spawn(function()
 		suit.Visible = player.Character ~= nil and r ~= "Spectator"
 		role.Text = monster and "MONSTER" or "HIDER"
 		role.TextColor3 = color
-		figure.Size = UDim2.fromOffset(40, move.crouching and 58 or 80)
+		local small = move.crouching or (monster and player.Character and player.Character:GetAttribute("Shrunk"))
+		figure.Size = UDim2.fromOffset(40, small and 58 or 80)
 		for _, f in ipairs(limbs) do
 			f.BackgroundColor3 = color
 		end
@@ -2682,11 +2828,18 @@ task.spawn(function()
 		end)
 	end
 	notify.OnClientEvent:Connect(show)
-	shake.OnClientEvent:Connect(function(message)
+	local shakeUntil, shakeStrength = 0, 0
+	shake.OnClientEvent:Connect(function(message, seconds, strength)
 		show(message or "The monster roared nearby!")
-		local stopAt = os.clock() + 1.2
-		while os.clock() < stopAt do
-			cameraShake = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * 1.2
+		local running = os.clock() < shakeUntil
+		shakeUntil = math.max(shakeUntil, os.clock() + (tonumber(seconds) or 1.2))
+		shakeStrength = math.max(running and shakeStrength or 0, tonumber(strength) or 1.2)
+		if running then
+			return -- the shake that's already going runs longer
+		end
+		while os.clock() < shakeUntil do
+			local fade = math.min(1, (shakeUntil - os.clock()) / 0.6) -- dies down at the end
+			cameraShake = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * shakeStrength * fade
 			RunService.RenderStepped:Wait()
 		end
 		cameraShake = Vector3.new()
@@ -3272,7 +3425,7 @@ end
 local ITEMS = {
 	{
 		name = "Leap",
-		tip = "Lunge forward (6s)",
+		tip = "Leap up high (6s)",
 		source = [==[
 onUse(function(character)
 	local root = character:FindFirstChild("HumanoidRootPart")
@@ -3288,6 +3441,49 @@ onUse(function(character)
 	end
 	root.AssemblyLinearVelocity = ahead * 90 + Vector3.new(0, 55, 0)
 	cooldown(6)
+end)
+]==],
+	},
+	{
+		name = "Lunge",
+		tip = "Pounce forward the way you're looking and swipe as you land (5s)",
+		source = [==[
+-- a low, fast jump straight ahead. A Humanoid brakes in the air, so a LinearVelocity carries it
+-- forward for the length of the pounce; then the monster swipes, catching a hider it lands on.
+local SPEED = 95 -- studs a second
+local SECONDS = 0.45
+local SWIPE = true -- false: just the jump
+onUse(function(character)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not (root and humanoid) then
+		return
+	end
+	local look = workspace.CurrentCamera.CFrame.LookVector
+	local ahead = Vector3.new(look.X, 0, look.Z)
+	ahead = ahead.Magnitude > 0.1 and ahead.Unit or root.CFrame.LookVector
+	humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+	root.AssemblyLinearVelocity = ahead * SPEED + Vector3.new(0, 24, 0)
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "CaveHunt_Lunge"
+	attachment.Parent = root
+	local push = Instance.new("LinearVelocity")
+	push.Attachment0 = attachment
+	push.RelativeTo = Enum.ActuatorRelativeTo.World
+	push.VelocityConstraintMode = Enum.VelocityConstraintMode.Line -- only forward; it still falls normally
+	push.LineDirection = ahead
+	push.LineVelocity = SPEED
+	push.MaxForce = root.AssemblyMass * 1500 -- strong, but a wall still stops it (no flinging)
+	push.Parent = root
+	cooldown(5)
+	task.delay(SECONDS, function()
+		attachment:Destroy()
+		push:Destroy()
+		local punch = ReplicatedStorage:FindFirstChild("CaveHunt_Punch")
+		if SWIPE and punch and root.Parent then
+			punch:FireServer(false)
+		end
+	end)
 end)
 ]==],
 	},
@@ -3427,12 +3623,23 @@ end)
 	},
 	{
 		name = "Roar",
-		tip = "Shake nearby hiders and knock out their lights for 5s (25s)",
+		tip = "Shake nearby hiders and knock out their flashlights for 12s (25s)",
 		source = [==[
 local roar = game:GetService("ReplicatedStorage"):WaitForChild("CaveHunt_Roar")
 onUse(function()
-	roar:FireServer()
+	roar:FireServer("Roar")
 	cooldown(25)
+end)
+]==],
+	},
+	{
+		name = "Cry",
+		tip = "A long wail heard much further away: hiders' screens shake and their flashlights die for 35s (75s)",
+		source = [==[
+local roar = game:GetService("ReplicatedStorage"):WaitForChild("CaveHunt_Roar")
+onUse(function()
+	roar:FireServer("Cry")
+	cooldown(75)
 end)
 ]==],
 	},
