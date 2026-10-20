@@ -1,0 +1,2625 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+      <Color3 name="Ambient">
+        <R>0.45</R>
+        <G>0.45</G>
+        <B>0.47</B>
+      </Color3>
+      <float name="Brightness">2.5</float>
+      <float name="ClockTime">13.5</float>
+      <float name="FogEnd">100000</float>
+      <float name="FogStart">0</float>
+      <float name="GeographicLatitude">20</float>
+      <bool name="GlobalShadows">true</bool>
+      <Color3 name="OutdoorAmbient">
+        <R>0.55</R>
+        <G>0.55</G>
+        <B>0.57</B>
+      </Color3>
+      <float name="ShadowSoftness">0.4</float>
+      <token name="Technology">3</token>
+    </Properties>
+  </Item>
+  <Item class="Players" referent="1">
+    <Properties>
+      <string name="Name">Players</string>
+      <bool name="CharacterAutoLoads">false</bool>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="2">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="3">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[--!strict
+-- Every tunable number lives here. Change a value, rebuild, and play.
+-- Distances are in studs, times in seconds, speeds in studs per second.
+
+export type WeaponDef = {
+	name: string,
+	slot: number,
+	damage: number,
+	fireInterval: number,
+	range: number,
+	pierce: number,
+	maxAmmo: number?,
+	tracerColor: Color3,
+}
+
+local Config = {}
+
+Config.GAME_NAME = "Block Horde"
+
+-- Camera ---------------------------------------------------------------------
+Config.CAMERA_DISTANCE = 120 -- how far the camera sits from the player
+Config.CAMERA_TILT_DEG = 15 -- degrees away from looking straight down (tilted to look north)
+Config.CAMERA_FOV = 30
+Config.CAMERA_FOLLOW_SHARPNESS = 10 -- higher = camera catches up faster
+
+-- Player ---------------------------------------------------------------------
+Config.WALK_SPEED = 16
+Config.PLAYER_MAX_HEALTH = 100
+Config.RESPAWN_DELAY = 3
+
+-- Where bullets leave the gun, relative to the player's center.
+Config.MUZZLE_FORWARD = 3.2
+Config.MUZZLE_HEIGHT = 0.5
+
+-- Shirt colors for the blocky hero. Player 1 gets the first, and so on.
+Config.SHIRT_COLORS = {
+	Color3.fromRGB(133, 128, 74), -- olive khaki
+	Color3.fromRGB(52, 101, 196), -- blue
+	Color3.fromRGB(226, 128, 36), -- orange
+	Color3.fromRGB(133, 72, 186), -- purple
+	Color3.fromRGB(32, 160, 150), -- teal
+	Color3.fromRGB(222, 98, 160), -- pink
+}
+Config.SKIN_COLOR = Color3.fromRGB(240, 196, 150)
+Config.HAIR_COLOR = Color3.fromRGB(58, 40, 28)
+Config.PANTS_COLOR = Color3.fromRGB(62, 60, 54)
+Config.GUN_COLOR = Color3.fromRGB(40, 40, 44)
+
+-- Rooms ----------------------------------------------------------------------
+Config.CELL_SIZE = 4 -- one map character = one 4x4 stud cell
+Config.WALL_HEIGHT = 6
+Config.WALL_COLOR = Color3.fromRGB(112, 102, 92)
+Config.WALL_TOP_COLOR = Color3.fromRGB(92, 83, 74)
+Config.FLOOR_COLOR_A = Color3.fromRGB(196, 196, 192)
+Config.FLOOR_COLOR_B = Color3.fromRGB(186, 186, 182)
+Config.VOID_COLOR = Color3.fromRGB(28, 28, 32)
+Config.START_ROOM = "Practice"
+
+-- Weapons --------------------------------------------------------------------
+-- slot: number key that selects it (10 means the 0 key).
+-- maxAmmo = nil means infinite ammo.
+-- pierce: how many enemies one bullet can pass through (1 = stops at the first).
+Config.WEAPONS = {
+	pistol = {
+		name = "PISTOL",
+		slot = 1,
+		damage = 10,
+		fireInterval = 0.3,
+		range = 60,
+		pierce = 1,
+		maxAmmo = nil,
+		tracerColor = Color3.fromRGB(255, 226, 64),
+	},
+} :: { [string]: WeaponDef }
+
+-- Effects ----------------------------------------------------------------------
+Config.TRACER_LIFETIME = 0.07
+Config.TRACER_WIDTH = 0.18
+Config.MUZZLE_FLASH_TIME = 0.05
+
+-- Practice targets (Milestone 1 only, replaced by real zombies in Milestone 3)
+Config.DUMMY_HEALTH = 30
+Config.DUMMY_RADIUS = 1.3
+Config.DUMMY_RESPAWN = 3
+Config.HIT_FLASH_TIME = 0.1
+
+return Config
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="5">
+        <Properties>
+          <string name="Name">Hitscan</string>
+          <string name="Source"><![CDATA[--!strict
+-- Hitscan math on the flat XZ plane: bullets are rays, enemies are circles.
+-- Shared so the server (which applies damage) and the shooter's client (which
+-- draws the tracer instantly) get the same answer.
+
+local Hitscan = {}
+
+-- Casts a ray from (ox, oz) along the unit direction (dx, dz), up to maxDist.
+-- circleOf(target) returns the target's x, z and radius.
+-- Returns the targets hit in order (at most `pierce` of them) and how far the
+-- bullet traveled before stopping.
+function Hitscan.cast<T>(
+	ox: number,
+	oz: number,
+	dx: number,
+	dz: number,
+	maxDist: number,
+	targets: { T },
+	circleOf: (T) -> (number, number, number),
+	pierce: number
+): ({ T }, number)
+	local candidates: { { target: T, dist: number } } = {}
+	for _, target in targets do
+		local cx, cz, radius = circleOf(target)
+		local fx, fz = cx - ox, cz - oz
+		local along = fx * dx + fz * dz
+		local distSq = fx * fx + fz * fz
+		local perpSq = distSq - along * along
+		local radiusSq = radius * radius
+		if perpSq > radiusSq then
+			continue
+		end
+		local enter
+		if distSq <= radiusSq then
+			enter = 0 -- the ray starts inside this target
+		elseif along < 0 then
+			continue -- behind the shooter
+		else
+			enter = along - math.sqrt(radiusSq - perpSq)
+		end
+		if enter <= maxDist then
+			table.insert(candidates, { target = target, dist = enter })
+		end
+	end
+
+	table.sort(candidates, function(a, b)
+		return a.dist < b.dist
+	end)
+
+	local hits: { T } = {}
+	local travel = maxDist
+	for i, candidate in candidates do
+		if i > pierce then
+			break
+		end
+		table.insert(hits, candidate.target)
+		if i == pierce then
+			travel = candidate.dist
+		end
+	end
+	return hits, travel
+end
+
+return Hitscan
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="6">
+        <Properties>
+          <string name="Name">Models</string>
+        </Properties>
+        <Item class="ModuleScript" referent="7">
+          <Properties>
+            <string name="Name">HeroModel</string>
+            <string name="Source"><![CDATA[--!strict
+-- The blocky hero: a big square head with dark hair, a box torso in the
+-- player's shirt color, and both arms held forward around a small dark gun.
+-- Offsets are relative to the HumanoidRootPart, which sits about 3 studs above
+-- the floor and faces -Z. Legs ride on the avatar's own legs so they swing
+-- when walking.
+
+local Config = require(script.Parent.Parent.Config)
+
+export type Attach = "Root" | "LeftLeg" | "RightLeg"
+
+export type PartSpec = {
+	name: string,
+	size: Vector3,
+	offset: CFrame,
+	color: Color3,
+	attach: Attach,
+	shape: Enum.PartType?,
+	transparency: number?,
+}
+
+local HeroModel = {}
+
+local EYE_COLOR = Color3.fromRGB(24, 24, 28)
+
+function HeroModel.parts(shirt: Color3): { PartSpec }
+	local skin = Config.SKIN_COLOR
+	local hair = Config.HAIR_COLOR
+	return {
+		-- Legs (the offset is used only if the avatar has no leg to ride on)
+		{ name = "LeftLeg", size = Vector3.new(0.9, 2, 0.9), offset = CFrame.new(-0.5, -2, 0), color = Config.PANTS_COLOR, attach = "LeftLeg" },
+		{ name = "RightLeg", size = Vector3.new(0.9, 2, 0.9), offset = CFrame.new(0.5, -2, 0), color = Config.PANTS_COLOR, attach = "RightLeg" },
+		-- Body
+		{ name = "Torso", size = Vector3.new(2, 1.8, 1.2), offset = CFrame.new(0, -0.2, 0), color = shirt, attach = "Root" },
+		{ name = "Head", size = Vector3.new(2.2, 2.2, 2.2), offset = CFrame.new(0, 1.8, 0), color = skin, attach = "Root" },
+		{ name = "Hair", size = Vector3.new(2.4, 0.5, 2.4), offset = CFrame.new(0, 3, 0.05), color = hair, attach = "Root" },
+		{ name = "HairBack", size = Vector3.new(2.4, 1.4, 0.4), offset = CFrame.new(0, 2.3, 1.05), color = hair, attach = "Root" },
+		{ name = "LeftEye", size = Vector3.new(0.32, 0.42, 0.1), offset = CFrame.new(-0.45, 1.95, -1.12), color = EYE_COLOR, attach = "Root" },
+		{ name = "RightEye", size = Vector3.new(0.32, 0.42, 0.1), offset = CFrame.new(0.45, 1.95, -1.12), color = EYE_COLOR, attach = "Root" },
+		-- Arms held forward, hands meeting at the gun
+		{ name = "LeftArm", size = Vector3.new(0.55, 0.55, 1.5), offset = CFrame.new(-0.72, 0.4, -1.15), color = shirt, attach = "Root" },
+		{ name = "RightArm", size = Vector3.new(0.55, 0.55, 1.5), offset = CFrame.new(0.72, 0.4, -1.15), color = shirt, attach = "Root" },
+		{ name = "LeftHand", size = Vector3.new(0.6, 0.6, 0.6), offset = CFrame.new(-0.5, 0.4, -2.05), color = skin, attach = "Root" },
+		{ name = "RightHand", size = Vector3.new(0.6, 0.6, 0.6), offset = CFrame.new(0.5, 0.4, -2.05), color = skin, attach = "Root" },
+		{ name = "Gun", size = Vector3.new(0.4, 0.5, 1.4), offset = CFrame.new(0, 0.5, -2.5), color = Config.GUN_COLOR, attach = "Root" },
+		-- A faint ring on the floor in the shirt color, so co-op players are easy to spot from above
+		{
+			name = "Ring",
+			size = Vector3.new(0.1, 3.8, 3.8),
+			offset = CFrame.new(0, -2.95, 0) * CFrame.Angles(0, 0, math.rad(90)),
+			color = shirt,
+			attach = "Root",
+			shape = Enum.PartType.Cylinder,
+			transparency = 0.45,
+		},
+	}
+end
+
+return HeroModel
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="8">
+        <Properties>
+          <string name="Name">Net</string>
+          <string name="Source"><![CDATA[--!strict
+-- Every RemoteEvent the game uses. The server creates them all at startup,
+-- so clients can always find them.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local RELIABLE: { string } = {
+	"Fire", -- client -> server: weaponId, dirX, dirZ
+	"ShotFired", -- server -> clients: shooter, weaponId, muzzle, endpoints
+	"WeaponState", -- server -> client: owned weapon ids, ammo
+	"PauseRequest", -- client -> server
+}
+
+local folder: Instance
+if RunService:IsServer() then
+	folder = Instance.new("Folder")
+	folder.Name = "Remotes"
+	for _, name in RELIABLE do
+		local remote = Instance.new("RemoteEvent")
+		remote.Name = name
+		remote.Parent = folder
+	end
+	folder.Parent = ReplicatedStorage
+else
+	folder = ReplicatedStorage:WaitForChild("Remotes")
+end
+
+local Net = {}
+
+function Net.event(name: string): RemoteEvent
+	return folder:WaitForChild(name) :: RemoteEvent
+end
+
+return Net
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="9">
+        <Properties>
+          <string name="Name">RoomGrid</string>
+          <string name="Source"><![CDATA[--!strict
+-- A room as a grid of cells, read from an ASCII map. Pure data and math (no
+-- Instances), so the server and every client can build the same grid.
+--
+-- Map characters: '#' wall, '.' floor, 'S' enemy entry, 'P' player spawn,
+-- 'A' ammo box spot, 'T' practice target. Row 1 is the north edge (-Z),
+-- column 1 the west edge (-X).
+
+export type RoomDef = {
+	name: string,
+	map: { string },
+}
+
+export type Cell = { c: number, r: number }
+
+local RoomGrid = {}
+RoomGrid.__index = RoomGrid
+
+export type RoomGrid = typeof(setmetatable(
+	{} :: {
+		name: string,
+		width: number,
+		height: number,
+		cellSize: number,
+		originX: number, -- world X of the west edge
+		originZ: number, -- world Z of the north edge
+		cells: { { string } }, -- cells[row][column]
+		blocked: { { boolean } },
+	},
+	RoomGrid
+))
+
+-- Builds the grid centered on (centerX, centerZ), which defaults to the world origin.
+function RoomGrid.new(def: RoomDef, cellSize: number, centerX: number?, centerZ: number?): RoomGrid
+	local height = #def.map
+	local width = 0
+	for _, line in def.map do
+		width = math.max(width, #line)
+	end
+
+	local cells: { { string } } = {}
+	local blocked: { { boolean } } = {}
+	for r = 1, height do
+		local line = def.map[r]
+		cells[r] = {}
+		blocked[r] = {}
+		for c = 1, width do
+			local char = string.sub(line, c, c)
+			if char == "" or char == " " then
+				char = "#" -- short lines are padded with wall
+			end
+			cells[r][c] = char
+			blocked[r][c] = char == "#"
+		end
+	end
+
+	return setmetatable({
+		name = def.name,
+		width = width,
+		height = height,
+		cellSize = cellSize,
+		originX = (centerX or 0) - width * cellSize / 2,
+		originZ = (centerZ or 0) - height * cellSize / 2,
+		cells = cells,
+		blocked = blocked,
+	}, RoomGrid)
+end
+
+function RoomGrid.inBounds(self: RoomGrid, c: number, r: number): boolean
+	return c >= 1 and c <= self.width and r >= 1 and r <= self.height
+end
+
+-- The map character at a cell; outside the map counts as wall.
+function RoomGrid.cell(self: RoomGrid, c: number, r: number): string
+	if not self:inBounds(c, r) then
+		return "#"
+	end
+	return self.cells[r][c]
+end
+
+-- Whether bullets and walkers are stopped by this cell. Outside the map is blocked.
+function RoomGrid.isBlocked(self: RoomGrid, c: number, r: number): boolean
+	if not self:inBounds(c, r) then
+		return true
+	end
+	return self.blocked[r][c]
+end
+
+function RoomGrid.setBlocked(self: RoomGrid, c: number, r: number, value: boolean)
+	if self:inBounds(c, r) then
+		self.blocked[r][c] = value
+	end
+end
+
+function RoomGrid.worldToCell(self: RoomGrid, x: number, z: number): (number, number)
+	return math.floor((x - self.originX) / self.cellSize) + 1, math.floor((z - self.originZ) / self.cellSize) + 1
+end
+
+-- World X and Z of a cell's center.
+function RoomGrid.cellCenter(self: RoomGrid, c: number, r: number): (number, number)
+	return self.originX + (c - 0.5) * self.cellSize, self.originZ + (r - 0.5) * self.cellSize
+end
+
+-- Every cell holding the given map character, in reading order.
+function RoomGrid.find(self: RoomGrid, char: string): { Cell }
+	local found: { Cell } = {}
+	for r = 1, self.height do
+		for c = 1, self.width do
+			if self.cells[r][c] == char then
+				table.insert(found, { c = c, r = r })
+			end
+		end
+	end
+	return found
+end
+
+-- Walks the grid from (ox, oz) along the unit direction (dx, dz) and returns the
+-- distance to the first blocked cell, or maxDist if nothing is in the way.
+function RoomGrid.raycast(self: RoomGrid, ox: number, oz: number, dx: number, dz: number, maxDist: number): number
+	local size = self.cellSize
+	local gx = (ox - self.originX) / size
+	local gz = (oz - self.originZ) / size
+	local c = math.floor(gx) + 1
+	local r = math.floor(gz) + 1
+	if self:isBlocked(c, r) then
+		return 0
+	end
+	if dx == 0 and dz == 0 then
+		return maxDist
+	end
+
+	local stepC = if dx > 0 then 1 elseif dx < 0 then -1 else 0
+	local stepR = if dz > 0 then 1 elseif dz < 0 then -1 else 0
+	local deltaC = if dx ~= 0 then size / math.abs(dx) else math.huge
+	local deltaR = if dz ~= 0 then size / math.abs(dz) else math.huge
+	-- Distance along the ray to the next column / row boundary.
+	local nextC = if dx > 0 then (c - gx) * size / dx elseif dx < 0 then (gx - (c - 1)) * size / -dx else math.huge
+	local nextR = if dz > 0 then (r - gz) * size / dz elseif dz < 0 then (gz - (r - 1)) * size / -dz else math.huge
+
+	while true do
+		local t
+		if nextC < nextR then
+			t = nextC
+			c += stepC
+			nextC += deltaC
+		else
+			t = nextR
+			r += stepR
+			nextR += deltaR
+		end
+		if t >= maxDist then
+			return maxDist
+		end
+		if self:isBlocked(c, r) then
+			return t
+		end
+	end
+end
+
+return RoomGrid
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="10">
+        <Properties>
+          <string name="Name">Rooms</string>
+          <string name="Source"><![CDATA[--!strict
+-- Room layouts as ASCII grids, one character per 4x4 stud cell.
+-- '#' wall, '.' floor, 'S' enemy entry, 'P' player spawn, 'A' ammo box spot,
+-- 'T' practice target. The top row is north, the top of the screen.
+
+local RoomGrid = require(script.Parent.RoomGrid)
+
+local Rooms: { [string]: RoomGrid.RoomDef } = {
+	-- Milestone 1 test room: open floor, a few pillars, and wooden targets.
+	Practice = {
+		name = "Practice",
+		map = {
+			"################################",
+			"#..............................#",
+			"#..............................#",
+			"#....T...................T.....#",
+			"#..............................#",
+			"#.....##.................##....#",
+			"#.....##.................##....#",
+			"#..............................#",
+			"#..........T........T..........#",
+			"#..............................#",
+			"#..............................#",
+			"#............P.P..P............#",
+			"#..............................#",
+			"#............P.P..P............#",
+			"#..............................#",
+			"#..T..........######.......T...#",
+			"#..............................#",
+			"#.....##.................##....#",
+			"#.....##........T........##....#",
+			"#..............................#",
+			"#..............................#",
+			"#.........T..........T.........#",
+			"#..............................#",
+			"################################",
+		},
+	},
+}
+
+return Rooms
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="11">
+        <Properties>
+          <string name="Name">Signal</string>
+          <string name="Source"><![CDATA[--!strict
+-- Minimal signal for talking between modules on the same machine.
+
+local Signal = {}
+Signal.__index = Signal
+
+export type Signal = typeof(setmetatable({} :: { handlers: { (...any) -> () } }, Signal))
+
+function Signal.new(): Signal
+	return setmetatable({ handlers = {} }, Signal)
+end
+
+-- Returns a function that disconnects the handler.
+function Signal.Connect(self: Signal, handler: (...any) -> ()): () -> ()
+	table.insert(self.handlers, handler)
+	return function()
+		local index = table.find(self.handlers, handler)
+		if index then
+			table.remove(self.handlers, index)
+		end
+	end
+end
+
+function Signal.Fire(self: Signal, ...: any)
+	for _, handler in table.clone(self.handlers) do
+		handler(...)
+	end
+end
+
+return Signal
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="12">
+        <Properties>
+          <string name="Name">Unlocks</string>
+          <string name="Source"><![CDATA[--!strict
+-- The unlock ladder, in the order of the original game.
+-- When a player's multiplier first reaches `mult` during a run, they get the entry.
+-- An entry with no `upgrade` unlocks the weapon itself; otherwise it upgrades that weapon.
+
+export type Upgrade =
+	"FastFire"
+	| "RapidFire"
+	| "DoubleAmmo"
+	| "QuadAmmo"
+	| "DoubleDamage"
+	| "WideShot"
+	| "WiderShot"
+	| "LongShot"
+	| "BigBang"
+	| "BiggerBang"
+	| "BigShot"
+	| "UnlimitedAmmo"
+
+export type Entry = {
+	mult: number,
+	weapon: string,
+	upgrade: Upgrade?,
+}
+
+local Unlocks = {}
+
+Unlocks.LADDER = {
+	{ mult = 5, weapon = "uzi" },
+	{ mult = 10, weapon = "shotgun" },
+	{ mult = 15, weapon = "barrels" },
+	{ mult = 20, weapon = "grenades" },
+	{ mult = 25, weapon = "uzi", upgrade = "RapidFire" },
+	{ mult = 30, weapon = "shotgun", upgrade = "BigShot" },
+	{ mult = 35, weapon = "fakewalls" },
+	{ mult = 40, weapon = "uzi", upgrade = "UnlimitedAmmo" },
+	{ mult = 50, weapon = "mines" },
+	{ mult = 55, weapon = "rockets" },
+	{ mult = 60, weapon = "barrels", upgrade = "BiggerBang" },
+	{ mult = 65, weapon = "grenades", upgrade = "BiggerBang" },
+	{ mult = 70, weapon = "shotgun", upgrade = "RapidFire" },
+	{ mult = 75, weapon = "railgun" },
+	{ mult = 80, weapon = "railgun", upgrade = "RapidFire" },
+	{ mult = 85, weapon = "rockets", upgrade = "RapidFire" },
+	{ mult = 90, weapon = "turret" },
+	{ mult = 100, weapon = "turret", upgrade = "RapidFire" },
+} :: { Entry }
+
+-- How each upgrade is written on screen, e.g. "SHOTGUN + WIDE SHOT".
+Unlocks.UPGRADE_NAMES = {
+	FastFire = "FAST FIRE",
+	RapidFire = "RAPID FIRE",
+	DoubleAmmo = "DOUBLE AMMO",
+	QuadAmmo = "QUAD AMMO",
+	DoubleDamage = "DOUBLE DAMAGE",
+	WideShot = "WIDE SHOT",
+	WiderShot = "WIDER SHOT",
+	LongShot = "LONG SHOT",
+	BigBang = "BIG BANG",
+	BiggerBang = "BIGGER BANG",
+	BigShot = "BIG SHOT",
+	UnlimitedAmmo = "UNLIMITED AMMO",
+} :: { [string]: string }
+
+return Unlocks
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="13">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="14">
+      <Properties>
+        <string name="Name">Server</string>
+      </Properties>
+      <Item class="ModuleScript" referent="15">
+        <Properties>
+          <string name="Name">Arena</string>
+          <string name="Source"><![CDATA[--!strict
+-- Owns the room being played: builds it and keeps its grid for hit tests and spawns.
+-- Clients rebuild the same grid from the RoomId attribute on ReplicatedStorage.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local RoomGrid = require(ReplicatedStorage.Shared.RoomGrid)
+local Rooms = require(ReplicatedStorage.Shared.Rooms)
+local RoomBuilder = require(script.Parent.RoomBuilder)
+
+local Arena = {}
+
+local current: RoomGrid.RoomGrid? = nil
+
+function Arena.load(roomId: string): RoomGrid.RoomGrid
+	local def = Rooms[roomId]
+	assert(def, "Unknown room: " .. roomId)
+	local grid = RoomGrid.new(def, Config.CELL_SIZE)
+	RoomBuilder.build(grid)
+	current = grid
+	ReplicatedStorage:SetAttribute("RoomId", roomId)
+	return grid
+end
+
+function Arena.grid(): RoomGrid.RoomGrid
+	return assert(current, "No room loaded")
+end
+
+return Arena
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="16">
+        <Properties>
+          <string name="Name">CharacterService</string>
+          <string name="Source"><![CDATA[--!strict
+-- Spawns players on the room's 'P' cells and dresses them as blocky heroes:
+-- the Roblox avatar is hidden and block parts are welded on top of it.
+-- Each player keeps a slot (1-6) that picks their shirt color and spawn cell.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local HeroModel = require(ReplicatedStorage.Shared.Models.HeroModel)
+local Arena = require(script.Parent.Arena)
+local Loadout = require(script.Parent.Loadout)
+local WorldSetup = require(script.Parent.WorldSetup)
+
+local CharacterService = {}
+
+local SPAWN_HEIGHT = 3.5 -- root part height above the floor when placed
+
+local slots: { [Player]: number } = {}
+
+local function takeFreeSlot(): number
+	local taken: { [number]: boolean } = {}
+	for _, slot in slots do
+		taken[slot] = true
+	end
+	for slot = 1, #Config.SHIRT_COLORS do
+		if not taken[slot] then
+			return slot
+		end
+	end
+	return 1
+end
+
+local LEG_PARTS = {
+	LeftLeg = { "LeftUpperLeg", "Left Leg" }, -- R15, R6
+	RightLeg = { "RightUpperLeg", "Right Leg" },
+}
+
+local function findLeg(character: Model, which: string): BasePart?
+	for _, name in LEG_PARTS[which] do
+		local part = character:FindFirstChild(name)
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	end
+	return nil
+end
+
+-- Hides one piece of the Roblox avatar. Hero parts are tagged and left alone.
+local function hideAvatarPiece(instance: Instance)
+	if instance:IsA("Accessory") then
+		task.defer(instance.Destroy, instance)
+	elseif instance:IsA("BasePart") then
+		instance.CollisionGroup = WorldSetup.PLAYER_GROUP
+		if not instance:GetAttribute("Hero") then
+			instance.Transparency = 1
+			instance.CastShadow = false
+		end
+	elseif instance:IsA("Decal") then
+		instance.Transparency = 1
+	end
+end
+
+local function addNameTag(head: BasePart, player: Player, shirt: Color3)
+	local tag = Instance.new("BillboardGui")
+	tag.Name = "NameTag"
+	tag.Size = UDim2.fromOffset(160, 24)
+	tag.StudsOffsetWorldSpace = Vector3.new(0, 2.4, 0)
+	tag.AlwaysOnTop = true
+	tag.LightInfluence = 0
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.FredokaOne
+	label.TextSize = 18
+	label.TextColor3 = shirt:Lerp(Color3.new(1, 1, 1), 0.35)
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.TextStrokeTransparency = 0
+	label.Text = player.DisplayName
+	label.Parent = tag
+
+	tag.Parent = head
+end
+
+local function dress(player: Player, character: Model)
+	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
+	local root = character:WaitForChild("HumanoidRootPart") :: BasePart
+
+	humanoid.WalkSpeed = Config.WALK_SPEED
+	humanoid.UseJumpPower = true
+	humanoid.JumpPower = 0
+	humanoid.AutoRotate = false
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	humanoid.MaxHealth = Config.PLAYER_MAX_HEALTH
+	humanoid.Health = Config.PLAYER_MAX_HEALTH
+
+	for _, descendant in character:GetDescendants() do
+		hideAvatarPiece(descendant)
+	end
+	character.DescendantAdded:Connect(hideAvatarPiece)
+
+	local shirt = Config.SHIRT_COLORS[slots[player] or 1]
+	local hero = Instance.new("Folder")
+	hero.Name = "Hero"
+	for _, spec in HeroModel.parts(shirt) do
+		local part = Instance.new("Part")
+		part.Name = spec.name
+		part.Size = spec.size
+		part.Color = spec.color
+		part.Material = Enum.Material.SmoothPlastic
+		part.TopSurface = Enum.SurfaceType.Smooth
+		part.BottomSurface = Enum.SurfaceType.Smooth
+		part.Transparency = spec.transparency or 0
+		if spec.shape then
+			part.Shape = spec.shape
+			part.CastShadow = false
+		end
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Massless = true
+		part:SetAttribute("Hero", true)
+
+		-- Legs ride on the avatar's legs (top edges lined up) so the walk animation swings them.
+		local anchor: BasePart = root
+		local offset = spec.offset
+		if spec.attach ~= "Root" then
+			local leg = findLeg(character, spec.attach)
+			if leg then
+				anchor = leg
+				offset = CFrame.new(0, leg.Size.Y / 2 - spec.size.Y / 2, 0)
+			end
+		end
+		part.CFrame = anchor.CFrame * offset
+		local weld = Instance.new("Weld")
+		weld.Part0 = anchor
+		weld.Part1 = part
+		weld.C0 = offset
+		weld.Parent = part
+
+		part.Parent = hero
+		if spec.name == "Head" then
+			addNameTag(part, player, shirt)
+		end
+	end
+	hero.Parent = character
+end
+
+local function spawnCFrame(player: Player): CFrame
+	local grid = Arena.grid()
+	local cells = grid:find("P")
+	if #cells == 0 then
+		return CFrame.new(0, SPAWN_HEIGHT, 0)
+	end
+	local cell = cells[((slots[player] or 1) - 1) % #cells + 1]
+	local x, z = grid:cellCenter(cell.c, cell.r)
+	return CFrame.new(x, SPAWN_HEIGHT, z) -- facing north
+end
+
+local function onCharacterAdded(player: Player, character: Model)
+	dress(player, character)
+	Loadout.sync(player)
+
+	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
+	humanoid.Died:Connect(function()
+		task.delay(Config.RESPAWN_DELAY, function()
+			if player.Parent and player.Character == character then
+				player:LoadCharacterAsync()
+			end
+		end)
+	end)
+
+	-- Move to the spawn cell once the engine has finished placing the character.
+	task.spawn(function()
+		if not character:IsDescendantOf(workspace) then
+			character.AncestryChanged:Wait()
+		end
+		task.wait()
+		character:PivotTo(spawnCFrame(player))
+	end)
+end
+
+local function onPlayerAdded(player: Player)
+	slots[player] = takeFreeSlot()
+	Loadout.reset(player)
+	player.CharacterAdded:Connect(function(character)
+		onCharacterAdded(player, character)
+	end)
+	if player.Character then
+		onCharacterAdded(player, player.Character)
+	else
+		player:LoadCharacterAsync()
+	end
+end
+
+function CharacterService.start()
+	Players.CharacterAutoLoads = false
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	Players.PlayerRemoving:Connect(function(player)
+		slots[player] = nil
+	end)
+	for _, player in Players:GetPlayers() do
+		task.spawn(onPlayerAdded, player)
+	end
+end
+
+return CharacterService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="17">
+        <Properties>
+          <string name="Name">Enemies</string>
+          <string name="Source"><![CDATA[--!strict
+-- The server's enemy table. Enemies are plain data (no Humanoids), so the
+-- server can run hundreds of them. Hit tests treat each one as a circle.
+-- Milestone 1 only holds practice dummies; Milestone 3 adds movement and
+-- replication to clients.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Signal = require(ReplicatedStorage.Shared.Signal)
+
+export type Enemy = {
+	id: number,
+	kind: string,
+	x: number,
+	z: number,
+	radius: number,
+	health: number,
+	maxHealth: number,
+	alive: boolean,
+}
+
+local Enemies = {}
+
+Enemies.Hit = Signal.new() -- (enemy: Enemy, attacker: Player?)
+Enemies.Killed = Signal.new() -- (enemy: Enemy, attacker: Player?)
+
+local living: { Enemy } = {}
+local lastId = 0
+
+function Enemies.spawn(kind: string, x: number, z: number, health: number, radius: number): Enemy
+	lastId += 1
+	local enemy: Enemy = {
+		id = lastId,
+		kind = kind,
+		x = x,
+		z = z,
+		radius = radius,
+		health = health,
+		maxHealth = health,
+		alive = true,
+	}
+	table.insert(living, enemy)
+	return enemy
+end
+
+-- All living enemies. Do not modify the returned list.
+function Enemies.list(): { Enemy }
+	return living
+end
+
+-- Applies damage and returns true if this killed the enemy.
+function Enemies.damage(enemy: Enemy, amount: number, attacker: Player?): boolean
+	if not enemy.alive then
+		return false
+	end
+	enemy.health -= amount
+	if enemy.health > 0 then
+		Enemies.Hit:Fire(enemy, attacker)
+		return false
+	end
+	enemy.alive = false
+	local index = table.find(living, enemy)
+	if index then
+		living[index] = living[#living]
+		living[#living] = nil
+	end
+	Enemies.Killed:Fire(enemy, attacker)
+	return true
+end
+
+return Enemies
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="18">
+        <Properties>
+          <string name="Name">Loadout</string>
+          <string name="Source"><![CDATA[--!strict
+-- Which weapons each player owns this run, and their ammo.
+-- Everyone starts with only the infinite-ammo pistol.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Net = require(ReplicatedStorage.Shared.Net)
+
+local WeaponState = Net.event("WeaponState")
+
+type State = {
+	owned: { [string]: boolean },
+	ammo: { [string]: number },
+}
+
+local Loadout = {}
+
+local states: { [Player]: State } = {}
+
+-- Sends the player's owned weapons and ammo to their client.
+function Loadout.sync(player: Player)
+	local state = states[player]
+	if not state then
+		return
+	end
+	local owned = {}
+	for id in state.owned do
+		table.insert(owned, id)
+	end
+	WeaponState:FireClient(player, owned, state.ammo)
+end
+
+function Loadout.reset(player: Player)
+	states[player] = { owned = { pistol = true }, ammo = {} }
+	Loadout.sync(player)
+end
+
+function Loadout.owns(player: Player, weaponId: string): boolean
+	local state = states[player]
+	return state ~= nil and state.owned[weaponId] == true
+end
+
+-- Spends one shot of ammo. Returns false if the weapon is empty.
+function Loadout.useAmmo(player: Player, weaponId: string): boolean
+	local weapon = Config.WEAPONS[weaponId]
+	local state = states[player]
+	if not weapon or not state then
+		return false
+	end
+	if weapon.maxAmmo == nil then
+		return true
+	end
+	local left = state.ammo[weaponId] or 0
+	if left <= 0 then
+		return false
+	end
+	state.ammo[weaponId] = left - 1
+	return true
+end
+
+function Loadout.start()
+	Players.PlayerRemoving:Connect(function(player)
+		states[player] = nil
+	end)
+end
+
+return Loadout
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Script" referent="19">
+        <Properties>
+          <string name="Name">Main</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[--!strict
+-- Server entry point: builds the world, then starts each service in order.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Arena = require(script.Parent.Arena)
+local CharacterService = require(script.Parent.CharacterService)
+local Loadout = require(script.Parent.Loadout)
+local PauseService = require(script.Parent.PauseService)
+local PracticeTargets = require(script.Parent.PracticeTargets)
+local WeaponService = require(script.Parent.WeaponService)
+local WorldSetup = require(script.Parent.WorldSetup)
+
+WorldSetup.start()
+local grid = Arena.load(Config.START_ROOM)
+Loadout.start()
+PauseService.start()
+WeaponService.start()
+PracticeTargets.start(grid)
+CharacterService.start() -- last, because it spawns players into the room
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="20">
+        <Properties>
+          <string name="Name">PauseService</string>
+          <string name="Source"><![CDATA[--!strict
+-- P pauses the game, but only when one player is on the server.
+-- The paused state is a workspace attribute so every client can see it.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Net = require(ReplicatedStorage.Shared.Net)
+
+local PauseService = {}
+
+local paused = false
+
+local function setPaused(value: boolean)
+	paused = value
+	workspace:SetAttribute("Paused", value)
+end
+
+function PauseService.isPaused(): boolean
+	return paused
+end
+
+function PauseService.start()
+	setPaused(false)
+	Net.event("PauseRequest").OnServerEvent:Connect(function()
+		if #Players:GetPlayers() == 1 then
+			setPaused(not paused)
+		end
+	end)
+	-- Someone joining always unpauses.
+	Players.PlayerAdded:Connect(function()
+		if paused then
+			setPaused(false)
+		end
+	end)
+end
+
+return PauseService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="21">
+        <Properties>
+          <string name="Name">PracticeTargets</string>
+          <string name="Source"><![CDATA[--!strict
+-- Milestone 1 stand-ins for zombies: wooden dummies on the room's 'T' cells.
+-- They flash white when hit, break when killed and come back a few seconds later.
+-- Milestone 3 replaces these with real zombies.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local RoomGrid = require(ReplicatedStorage.Shared.RoomGrid)
+local Enemies = require(script.Parent.Enemies)
+
+local PracticeTargets = {}
+
+local WOOD_LIGHT = Color3.fromRGB(204, 160, 102)
+local WOOD_DARK = Color3.fromRGB(122, 84, 52)
+local TARGET_RED = Color3.fromRGB(214, 40, 40)
+local TARGET_WHITE = Color3.fromRGB(245, 245, 245)
+
+local folder: Folder
+local models: { [number]: Model } = {}
+
+local function addPart(model: Model, size: Vector3, cframe: CFrame, color: Color3, shape: Enum.PartType?): Part
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanTouch = false
+	part.Size = size
+	part.CFrame = cframe
+	part.Color = color
+	part.Material = Enum.Material.SmoothPlastic
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	if shape then
+		part.Shape = shape
+	end
+	part:SetAttribute("BaseColor", color)
+	part.Parent = model
+	return part
+end
+
+local function buildDummy(x: number, z: number): Model
+	local model = Instance.new("Model")
+	model.Name = "Dummy"
+	local at = CFrame.new(x, 0, z)
+	local up = CFrame.Angles(0, 0, math.rad(90)) -- turns a cylinder to lie flat
+	addPart(model, Vector3.new(2.2, 0.4, 2.2), at * CFrame.new(0, 0.2, 0), WOOD_DARK)
+	local body = addPart(model, Vector3.new(1.8, 2.2, 1), at * CFrame.new(0, 1.5, 0), WOOD_LIGHT)
+	addPart(model, Vector3.new(3, 0.4, 0.4), at * CFrame.new(0, 2.2, 0), WOOD_DARK)
+	addPart(model, Vector3.new(1.6, 1.6, 1.6), at * CFrame.new(0, 3.4, 0), WOOD_LIGHT)
+	-- A bullseye painted on top of the head, which is what the overhead camera sees.
+	addPart(model, Vector3.new(0.1, 1.3, 1.3), at * CFrame.new(0, 4.22, 0) * up, TARGET_RED, Enum.PartType.Cylinder)
+	addPart(model, Vector3.new(0.1, 0.85, 0.85), at * CFrame.new(0, 4.24, 0) * up, TARGET_WHITE, Enum.PartType.Cylinder)
+	addPart(model, Vector3.new(0.1, 0.4, 0.4), at * CFrame.new(0, 4.26, 0) * up, TARGET_RED, Enum.PartType.Cylinder)
+	model.PrimaryPart = body
+	model:SetAttribute("Radius", Config.DUMMY_RADIUS)
+	return model
+end
+
+local function spawnDummy(x: number, z: number)
+	local enemy = Enemies.spawn("Dummy", x, z, Config.DUMMY_HEALTH, Config.DUMMY_RADIUS)
+	local model = buildDummy(x, z)
+	model.Parent = folder
+	models[enemy.id] = model
+end
+
+local function flash(model: Model)
+	for _, part in model:GetChildren() do
+		if part:IsA("BasePart") then
+			part.Color = Color3.new(1, 1, 1)
+		end
+	end
+	task.delay(Config.HIT_FLASH_TIME, function()
+		for _, part in model:GetChildren() do
+			local base = part:GetAttribute("BaseColor")
+			if part:IsA("BasePart") and typeof(base) == "Color3" then
+				part.Color = base
+			end
+		end
+	end)
+end
+
+function PracticeTargets.start(grid: RoomGrid.RoomGrid)
+	folder = Instance.new("Folder")
+	folder.Name = "PracticeTargets"
+	folder.Parent = workspace
+
+	Enemies.Hit:Connect(function(enemy: Enemies.Enemy)
+		local model = models[enemy.id]
+		if model then
+			flash(model)
+		end
+	end)
+
+	Enemies.Killed:Connect(function(enemy: Enemies.Enemy)
+		local model = models[enemy.id]
+		if not model then
+			return
+		end
+		models[enemy.id] = nil
+		model:Destroy()
+		task.delay(Config.DUMMY_RESPAWN, spawnDummy, enemy.x, enemy.z)
+	end)
+
+	for _, cell in grid:find("T") do
+		spawnDummy(grid:cellCenter(cell.c, cell.r))
+	end
+end
+
+return PracticeTargets
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="22">
+        <Properties>
+          <string name="Name">RoomBuilder</string>
+          <string name="Source"><![CDATA[--!strict
+-- Turns a RoomGrid into parts: a checkered tile floor and block walls.
+-- Neighbouring wall cells are merged into large rectangles to keep part count low.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local RoomGrid = require(ReplicatedStorage.Shared.RoomGrid)
+
+local RoomBuilder = {}
+
+local FLOOR_THICKNESS = 1
+local TILE_RAISE = 0.04 -- the darker tiles sit a hair above the base floor to avoid flicker
+local WALL_CAP = 0.4 -- thickness of the darker top of each wall
+
+local function block(name: string, size: Vector3, cframe: CFrame, color: Color3, parent: Instance): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Anchored = true
+	part.Size = size
+	part.CFrame = cframe
+	part.Color = color
+	part.Material = Enum.Material.SmoothPlastic
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Parent = parent
+	return part
+end
+
+local function buildFloor(grid: RoomGrid.RoomGrid, folder: Instance)
+	local size = grid.cellSize
+	local w, h = grid.width * size, grid.height * size
+	local base = block(
+		"Floor",
+		Vector3.new(w, FLOOR_THICKNESS, h),
+		CFrame.new(grid.originX + w / 2, -FLOOR_THICKNESS / 2, grid.originZ + h / 2),
+		Config.FLOOR_COLOR_A,
+		folder
+	)
+	base.CastShadow = false
+
+	for r = 1, grid.height do
+		for c = 1, grid.width do
+			if (c + r) % 2 == 0 and grid:cell(c, r) ~= "#" then
+				local x, z = grid:cellCenter(c, r)
+				local tile = block("Tile", Vector3.new(size, 0.2, size), CFrame.new(x, TILE_RAISE - 0.1, z), Config.FLOOR_COLOR_B, folder)
+				tile.CanCollide = false
+				tile.CanQuery = false
+				tile.CanTouch = false
+				tile.CastShadow = false
+			end
+		end
+	end
+end
+
+local function buildWalls(grid: RoomGrid.RoomGrid, folder: Instance)
+	local size = grid.cellSize
+	local used: { [number]: boolean } = {}
+	local function key(c: number, r: number): number
+		return r * 10000 + c
+	end
+	local function free(c: number, r: number): boolean
+		return grid:cell(c, r) == "#" and grid:inBounds(c, r) and not used[key(c, r)]
+	end
+
+	for r = 1, grid.height do
+		for c = 1, grid.width do
+			if free(c, r) then
+				-- Grow the widest run on this row, then extend it down while every cell matches.
+				local runW = 1
+				while free(c + runW, r) do
+					runW += 1
+				end
+				local runH = 1
+				while true do
+					local rowOk = true
+					for cc = c, c + runW - 1 do
+						if not free(cc, r + runH) then
+							rowOk = false
+							break
+						end
+					end
+					if not rowOk then
+						break
+					end
+					runH += 1
+				end
+				for rr = r, r + runH - 1 do
+					for cc = c, c + runW - 1 do
+						used[key(cc, rr)] = true
+					end
+				end
+
+				local x0, z0 = grid:cellCenter(c, r)
+				local cx = x0 + (runW - 1) * size / 2
+				local cz = z0 + (runH - 1) * size / 2
+				local footprint = Vector2.new(runW * size, runH * size)
+				local bodyHeight = Config.WALL_HEIGHT - WALL_CAP
+				block("Wall", Vector3.new(footprint.X, bodyHeight, footprint.Y), CFrame.new(cx, bodyHeight / 2, cz), Config.WALL_COLOR, folder)
+				local cap = block(
+					"WallTop",
+					Vector3.new(footprint.X, WALL_CAP, footprint.Y),
+					CFrame.new(cx, bodyHeight + WALL_CAP / 2, cz),
+					Config.WALL_TOP_COLOR,
+					folder
+				)
+				cap.CastShadow = false
+			end
+		end
+	end
+end
+
+-- Builds the room into workspace.Arena, replacing whatever room was there.
+function RoomBuilder.build(grid: RoomGrid.RoomGrid): Folder
+	local old = workspace:FindFirstChild("Arena")
+	if old then
+		old:Destroy()
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "Arena"
+	buildFloor(grid, folder)
+	buildWalls(grid, folder)
+	folder.Parent = workspace
+	return folder
+end
+
+return RoomBuilder
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="23">
+        <Properties>
+          <string name="Name">WeaponService</string>
+          <string name="Source"><![CDATA[--!strict
+-- Checks every shot a client asks for (owned weapon, fire rate, ammo) and
+-- applies hitscan damage against the enemy table. Then tells all clients so
+-- they can draw the tracer; the shooter already drew theirs instantly.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Hitscan = require(ReplicatedStorage.Shared.Hitscan)
+local Net = require(ReplicatedStorage.Shared.Net)
+local Arena = require(script.Parent.Arena)
+local Enemies = require(script.Parent.Enemies)
+local Loadout = require(script.Parent.Loadout)
+local PauseService = require(script.Parent.PauseService)
+
+local Fire = Net.event("Fire")
+local ShotFired = Net.event("ShotFired")
+
+local WeaponService = {}
+
+-- Per player, per weapon: the earliest time the next shot is allowed.
+local nextShotAt: { [Player]: { [string]: number } } = {}
+
+local function circleOf(enemy: Enemies.Enemy): (number, number, number)
+	return enemy.x, enemy.z, enemy.radius
+end
+
+local function onFire(player: Player, weaponId: unknown, dirX: unknown, dirZ: unknown)
+	if typeof(weaponId) ~= "string" or typeof(dirX) ~= "number" or typeof(dirZ) ~= "number" then
+		return
+	end
+	local weapon = Config.WEAPONS[weaponId]
+	if not weapon or PauseService.isPaused() or not Loadout.owns(player, weaponId) then
+		return
+	end
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health <= 0 then
+		return
+	end
+
+	local length = math.sqrt(dirX * dirX + dirZ * dirZ)
+	if length ~= length or length < 0.01 then
+		return -- NaN or zero direction
+	end
+	local dx, dz = dirX / length, dirZ / length
+
+	-- Fire rate check, with half an interval of slack for network jitter.
+	local now = os.clock()
+	local times = nextShotAt[player]
+	if not times then
+		times = {}
+		nextShotAt[player] = times
+	end
+	local allowedAt = times[weaponId] or 0
+	if now < allowedAt - weapon.fireInterval * 0.5 then
+		return
+	end
+	times[weaponId] = math.max(allowedAt, now) + weapon.fireInterval
+
+	if not Loadout.useAmmo(player, weaponId) then
+		return
+	end
+
+	-- Cast from the player's center so enemies hugging the gun still get hit.
+	local pos = root.Position
+	local wallDist = Arena.grid():raycast(pos.X, pos.Z, dx, dz, weapon.range)
+	local hits, travel = Hitscan.cast(pos.X, pos.Z, dx, dz, wallDist, Enemies.list(), circleOf, weapon.pierce)
+	for _, enemy in hits do
+		Enemies.damage(enemy, weapon.damage, player)
+	end
+
+	local y = pos.Y + Config.MUZZLE_HEIGHT
+	local muzzle = Vector3.new(pos.X + dx * Config.MUZZLE_FORWARD, y, pos.Z + dz * Config.MUZZLE_FORWARD)
+	local endpoints = {}
+	if travel > Config.MUZZLE_FORWARD then
+		table.insert(endpoints, Vector3.new(pos.X + dx * travel, y, pos.Z + dz * travel))
+	end
+	ShotFired:FireAllClients(player, weaponId, muzzle, endpoints)
+end
+
+function WeaponService.start()
+	Fire.OnServerEvent:Connect(onFire)
+	Players.PlayerRemoving:Connect(function(player)
+		nextShotAt[player] = nil
+	end)
+end
+
+return WeaponService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="24">
+        <Properties>
+          <string name="Name">WorldSetup</string>
+          <string name="Source"><![CDATA[--!strict
+-- One-time world setup: the dark ground around every room and collision rules.
+
+local PhysicsService = game:GetService("PhysicsService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+
+local WorldSetup = {}
+
+WorldSetup.PLAYER_GROUP = "Players"
+
+function WorldSetup.start()
+	-- Players walk through each other, so co-op partners never block a corridor.
+	PhysicsService:RegisterCollisionGroup(WorldSetup.PLAYER_GROUP)
+	PhysicsService:CollisionGroupSetCollidable(WorldSetup.PLAYER_GROUP, WorldSetup.PLAYER_GROUP, false)
+
+	-- Dark ground under and around the rooms, so the overhead camera never sees sky.
+	local void = Instance.new("Part")
+	void.Name = "Void"
+	void.Anchored = true
+	void.Size = Vector3.new(2048, 1, 2048)
+	void.CFrame = CFrame.new(0, -2, 0)
+	void.Color = Config.VOID_COLOR
+	void.Material = Enum.Material.SmoothPlastic
+	void.TopSurface = Enum.SurfaceType.Smooth
+	void.BottomSurface = Enum.SurfaceType.Smooth
+	void.CastShadow = false
+	void.Parent = workspace
+end
+
+return WorldSetup
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="25">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+      <bool name="AutoJumpEnabled">false</bool>
+      <float name="CharacterJumpHeight">0</float>
+      <float name="CharacterJumpPower">0</float>
+      <token name="DevComputerMovementMode">3</token>
+      <token name="DevTouchMovementMode">5</token>
+      <bool name="EnableMouseLockOption">false</bool>
+      <bool name="LoadCharacterAppearance">false</bool>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="26">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="27">
+        <Properties>
+          <string name="Name">Client</string>
+        </Properties>
+        <Item class="ModuleScript" referent="28">
+          <Properties>
+            <string name="Name">CameraController</string>
+            <string name="Source"><![CDATA[--!strict
+-- Overhead camera: high above the player, tilted a little to look north,
+-- narrow field of view. Smooth follow, no zoom, no rotation.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local CharacterController = require(script.Parent.CharacterController)
+
+local CameraController = {}
+
+local focus: Vector3? = nil
+
+local function update(dt: number)
+	local camera = workspace.CurrentCamera
+	if camera.CameraType ~= Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Scriptable
+	end
+	if camera.FieldOfView ~= Config.CAMERA_FOV then
+		camera.FieldOfView = Config.CAMERA_FOV
+	end
+
+	local root = CharacterController.getRoot()
+	if root then
+		local target = Vector3.new(root.Position.X, 0, root.Position.Z)
+		if focus then
+			focus = focus:Lerp(target, 1 - math.exp(-Config.CAMERA_FOLLOW_SHARPNESS * dt))
+		else
+			focus = target
+		end
+	end
+
+	local at = focus or Vector3.zero
+	local tilt = math.rad(Config.CAMERA_TILT_DEG)
+	local distance = Config.CAMERA_DISTANCE
+	local eye = at + Vector3.new(0, distance * math.cos(tilt), distance * math.sin(tilt))
+	camera.CFrame = CFrame.lookAt(eye, at)
+end
+
+function CameraController.start()
+	RunService:BindToRenderStep("BlockHordeCamera", Enum.RenderPriority.Camera.Value + 1, update)
+end
+
+return CameraController
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="29">
+          <Properties>
+            <string name="Name">CharacterController</string>
+            <string name="Source"><![CDATA[--!strict
+-- Moves the local character from input and turns it to face the aim direction.
+-- Jumping is off and Humanoid.AutoRotate is off; facing is set here.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local Input = require(script.Parent.InputController)
+
+local player = Players.LocalPlayer
+
+local CharacterController = {}
+
+local humanoid: Humanoid? = nil
+local root: BasePart? = nil
+local align: AlignOrientation? = nil
+local facing = Vector3.new(0, 0, -1)
+
+function CharacterController.getRoot(): BasePart?
+	return root
+end
+
+-- Unit vector on the floor plane the character is facing (and shooting toward).
+function CharacterController.getFacing(): Vector3
+	return facing
+end
+
+function CharacterController.isAlive(): boolean
+	return humanoid ~= nil and humanoid.Health > 0 and humanoid.Parent ~= nil
+end
+
+local function flat(v: Vector3): Vector3?
+	local f = Vector3.new(v.X, 0, v.Z)
+	if f.Magnitude < 1e-3 then
+		return nil
+	end
+	return f.Unit
+end
+
+local function setup(character: Model)
+	local h = character:WaitForChild("Humanoid") :: Humanoid
+	local r = character:WaitForChild("HumanoidRootPart") :: BasePart
+	h.AutoRotate = false
+	h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "FacingAttachment"
+	attachment.Parent = r
+	local a = Instance.new("AlignOrientation")
+	a.Name = "Facing"
+	a.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	a.Attachment0 = attachment
+	a.RigidityEnabled = true
+	a.Parent = r
+
+	facing = flat(r.CFrame.LookVector) or Vector3.new(0, 0, -1)
+	a.CFrame = CFrame.lookAt(Vector3.zero, facing)
+	humanoid, root, align = h, r, a
+
+	-- Hide our own name tag; teammates still see it.
+	task.spawn(function()
+		local hero = character:WaitForChild("Hero", 10)
+		local head = hero and hero:WaitForChild("Head", 10)
+		local tag = head and head:WaitForChild("NameTag", 10)
+		if tag and tag:IsA("BillboardGui") then
+			tag.Enabled = false
+		end
+	end)
+end
+
+local function update()
+	local h, r, a = humanoid, root, align
+	if not h or not r or not a or not h.Parent then
+		return
+	end
+	if workspace:GetAttribute("Paused") == true or h.Health <= 0 then
+		h:Move(Vector3.zero, false)
+		return
+	end
+
+	local move = Input.getMoveVector()
+	h:Move(move, false)
+
+	local aim: Vector3? = nil
+	if Input.scheme == "Mouse" then
+		local point = Input.getMouseGroundPoint(r.Position.Y + Config.MUZZLE_HEIGHT)
+		if point then
+			local toPoint = point - r.Position
+			if Vector3.new(toPoint.X, 0, toPoint.Z).Magnitude > 0.5 then
+				aim = flat(toPoint)
+			end
+		end
+	elseif move.Magnitude > 0.1 then
+		aim = flat(move)
+	end
+	if aim then
+		facing = aim
+	end
+	a.CFrame = CFrame.lookAt(Vector3.zero, facing)
+end
+
+function CharacterController.start()
+	player.CharacterAdded:Connect(setup)
+	if player.Character then
+		task.spawn(setup, player.Character)
+	end
+	RunService:BindToRenderStep("BlockHordeCharacter", Enum.RenderPriority.Input.Value + 1, update)
+end
+
+return CharacterController
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="30">
+          <Properties>
+            <string name="Name">ClientArena</string>
+            <string name="Source"><![CDATA[--!strict
+-- The client's copy of the current room grid, rebuilt from the RoomId attribute
+-- the server sets. Used to stop instant tracers at walls.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local RoomGrid = require(Shared:WaitForChild("RoomGrid"))
+local Rooms = require(Shared:WaitForChild("Rooms"))
+
+local ClientArena = {}
+
+local current: RoomGrid.RoomGrid? = nil
+
+local function rebuild()
+	local roomId = ReplicatedStorage:GetAttribute("RoomId")
+	if typeof(roomId) == "string" and Rooms[roomId] then
+		current = RoomGrid.new(Rooms[roomId], Config.CELL_SIZE)
+	else
+		current = nil
+	end
+end
+
+function ClientArena.grid(): RoomGrid.RoomGrid?
+	return current
+end
+
+function ClientArena.start()
+	rebuild()
+	ReplicatedStorage:GetAttributeChangedSignal("RoomId"):Connect(rebuild)
+end
+
+return ClientArena
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="31">
+          <Properties>
+            <string name="Name">Effects</string>
+            <string name="Source"><![CDATA[--!strict
+-- Short-lived visual effects drawn only on this client: bullet tracers and
+-- muzzle flashes. Parts are pooled and reused instead of created per shot.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+
+local Effects = {}
+
+type Active = { part: Part, expiresAt: number, life: number }
+
+local HIDDEN = CFrame.new(0, -10000, 0)
+local FLASH_COLOR = Color3.fromRGB(255, 244, 180)
+
+local folder: Folder
+local pool: { Part } = {}
+local active: { Active } = {}
+
+local function takePart(): Part
+	local pooled = table.remove(pool)
+	if pooled then
+		return pooled
+	end
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Material = Enum.Material.Neon
+	part.Parent = folder
+	return part
+end
+
+local function show(part: Part, life: number)
+	part.Transparency = 0
+	table.insert(active, { part = part, expiresAt = os.clock() + life, life = life })
+end
+
+function Effects.tracer(from: Vector3, to: Vector3, color: Color3)
+	local length = (to - from).Magnitude
+	if length < 0.05 then
+		return
+	end
+	local part = takePart()
+	part.Size = Vector3.new(Config.TRACER_WIDTH, Config.TRACER_WIDTH, length)
+	part.CFrame = CFrame.lookAt((from + to) / 2, to)
+	part.Color = color
+	show(part, Config.TRACER_LIFETIME)
+end
+
+function Effects.muzzleFlash(at: Vector3)
+	local part = takePart()
+	part.Size = Vector3.new(0.7, 0.7, 0.7)
+	part.CFrame = CFrame.new(at)
+	part.Color = FLASH_COLOR
+	show(part, Config.MUZZLE_FLASH_TIME)
+end
+
+local function update()
+	local now = os.clock()
+	for i = #active, 1, -1 do
+		local entry = active[i]
+		local left = entry.expiresAt - now
+		if left <= 0 then
+			entry.part.Transparency = 1
+			entry.part.CFrame = HIDDEN
+			table.insert(pool, entry.part)
+			active[i] = active[#active]
+			active[#active] = nil
+		else
+			entry.part.Transparency = 1 - left / entry.life
+		end
+	end
+end
+
+function Effects.start()
+	folder = Instance.new("Folder")
+	folder.Name = "ClientEffects"
+	folder.Parent = workspace
+	RunService.Heartbeat:Connect(update)
+end
+
+return Effects
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="32">
+          <Properties>
+            <string name="Name">EnemyView</string>
+            <string name="Source"><![CDATA[--!strict
+-- Where this client thinks enemies are, for instant tracer endpoints.
+-- Milestone 1 reads the practice dummies; Milestone 3 replaces this with
+-- interpolated enemy snapshots from the server.
+
+local EnemyView = {}
+
+export type Target = { x: number, z: number, radius: number }
+
+function EnemyView.getTargets(): { Target }
+	local targets: { Target } = {}
+	local folder = workspace:FindFirstChild("PracticeTargets")
+	if not folder then
+		return targets
+	end
+	for _, model in folder:GetChildren() do
+		local radius = model:GetAttribute("Radius")
+		if model:IsA("Model") and typeof(radius) == "number" then
+			local pos = model:GetPivot().Position
+			table.insert(targets, { x = pos.X, z = pos.Z, radius = radius })
+		end
+	end
+	return targets
+end
+
+function EnemyView.circleOf(target: Target): (number, number, number)
+	return target.x, target.z, target.radius
+end
+
+return EnemyView
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="33">
+          <Properties>
+            <string name="Name">InputController</string>
+            <string name="Source"><![CDATA[--!strict
+-- Turns keyboard, mouse and touch input into game intents: a move vector,
+-- whether fire is held, weapon picks and pause.
+--
+-- Schemes:
+--   Classic (default): WASD/arrows move in 8 directions and set facing, Space fires.
+--   Mouse: WASD/arrows move, the mouse aims, click (or Space) fires.
+--   Touch: on-screen thumbstick and buttons (see MobileControls).
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+
+local Signal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Signal"))
+
+export type Scheme = "Classic" | "Mouse" | "Touch"
+
+local Input = {}
+
+Input.scheme = "Classic" :: Scheme
+Input.SchemeChanged = Signal.new() -- (scheme: Scheme)
+Input.WeaponSlot = Signal.new() -- (slot: number), 10 is the 0 key
+Input.CycleWeapon = Signal.new() -- (step: number), -1 or 1
+Input.PausePressed = Signal.new()
+
+local NORTH = Vector3.new(0, 0, -1)
+local SOUTH = Vector3.new(0, 0, 1)
+local WEST = Vector3.new(-1, 0, 0)
+local EAST = Vector3.new(1, 0, 0)
+
+local MOVE_KEYS: { [Enum.KeyCode]: Vector3 } = {
+	[Enum.KeyCode.W] = NORTH,
+	[Enum.KeyCode.Up] = NORTH,
+	[Enum.KeyCode.S] = SOUTH,
+	[Enum.KeyCode.Down] = SOUTH,
+	[Enum.KeyCode.A] = WEST,
+	[Enum.KeyCode.Left] = WEST,
+	[Enum.KeyCode.D] = EAST,
+	[Enum.KeyCode.Right] = EAST,
+}
+
+local SLOT_KEYS: { [Enum.KeyCode]: number } = {
+	[Enum.KeyCode.One] = 1,
+	[Enum.KeyCode.Two] = 2,
+	[Enum.KeyCode.Three] = 3,
+	[Enum.KeyCode.Four] = 4,
+	[Enum.KeyCode.Five] = 5,
+	[Enum.KeyCode.Six] = 6,
+	[Enum.KeyCode.Seven] = 7,
+	[Enum.KeyCode.Eight] = 8,
+	[Enum.KeyCode.Nine] = 9,
+	[Enum.KeyCode.Zero] = 10,
+}
+
+local touchMove = Vector3.zero
+local touchFire = false
+local mouseFire = false
+-- Keys pressed while the game had input focus (not typed into chat or a text box).
+local held: { [Enum.KeyCode]: boolean } = {}
+
+local function releaseAll()
+	table.clear(held)
+	mouseFire = false
+end
+
+-- World-space move direction on the floor plane, length 0 to 1.
+function Input.getMoveVector(): Vector3
+	if Input.scheme == "Touch" then
+		return touchMove
+	end
+	local sum = Vector3.zero
+	for key, dir in MOVE_KEYS do
+		if held[key] then
+			sum += dir
+		end
+	end
+	-- W and Up together still count once.
+	local move = Vector3.new(math.clamp(sum.X, -1, 1), 0, math.clamp(sum.Z, -1, 1))
+	if move.Magnitude > 0 then
+		return move.Unit
+	end
+	return move
+end
+
+function Input.isFireHeld(): boolean
+	if Input.scheme == "Touch" then
+		return touchFire
+	end
+	if held[Enum.KeyCode.Space] then
+		return true
+	end
+	return Input.scheme == "Mouse" and mouseFire
+end
+
+-- The point under the mouse cursor on the horizontal plane at `height`.
+function Input.getMouseGroundPoint(height: number): Vector3?
+	local camera = workspace.CurrentCamera
+	local mouse = UserInputService:GetMouseLocation()
+	local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
+	if math.abs(ray.Direction.Y) < 1e-4 then
+		return nil
+	end
+	local t = (height - ray.Origin.Y) / ray.Direction.Y
+	if t < 0 then
+		return nil
+	end
+	return ray.Origin + ray.Direction * t
+end
+
+function Input.setTouchMove(move: Vector3)
+	touchMove = move
+end
+
+function Input.setTouchFire(held: boolean)
+	touchFire = held
+end
+
+function Input.setScheme(scheme: Scheme)
+	if scheme ~= Input.scheme then
+		Input.scheme = scheme
+		mouseFire = false
+		Input.SchemeChanged:Fire(scheme)
+	end
+end
+
+function Input.start()
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		Input.scheme = "Touch"
+	end
+
+	UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
+		if processed then
+			return
+		end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			mouseFire = true
+			return
+		end
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return
+		end
+		local key = input.KeyCode
+		held[key] = true
+		local slot = SLOT_KEYS[key]
+		if slot then
+			Input.WeaponSlot:Fire(slot)
+		elseif key == Enum.KeyCode.Q then
+			Input.CycleWeapon:Fire(-1)
+		elseif key == Enum.KeyCode.E then
+			Input.CycleWeapon:Fire(1)
+		elseif key == Enum.KeyCode.P then
+			Input.PausePressed:Fire()
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			mouseFire = false
+		elseif input.UserInputType == Enum.UserInputType.Keyboard then
+			held[input.KeyCode] = nil
+		end
+	end)
+
+	-- Never leave a key stuck down when focus moves to chat or another window.
+	UserInputService.TextBoxFocused:Connect(releaseAll)
+	UserInputService.WindowFocusReleased:Connect(releaseAll)
+end
+
+return Input
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="34">
+          <Properties>
+            <string name="Name">Main</string>
+            <string name="Source"><![CDATA[--!strict
+-- Client entry point: starts each controller once the game has loaded.
+
+local StarterGui = game:GetService("StarterGui")
+
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
+local CameraController = require(script.Parent.CameraController)
+local CharacterController = require(script.Parent.CharacterController)
+local ClientArena = require(script.Parent.ClientArena)
+local Effects = require(script.Parent.Effects)
+local Input = require(script.Parent.InputController)
+local MobileControls = require(script.Parent.MobileControls)
+local PauseUI = require(script.Parent.PauseUI)
+local SettingsUI = require(script.Parent.SettingsUI)
+local WeaponController = require(script.Parent.WeaponController)
+
+-- Weapons use the number keys, so hide Roblox's tool bar. CoreGui may need a moment to be ready.
+task.spawn(function()
+	for _ = 1, 20 do
+		if pcall(StarterGui.SetCoreGuiEnabled, StarterGui, Enum.CoreGuiType.Backpack, false) then
+			return
+		end
+		task.wait(0.5)
+	end
+end)
+
+Input.start()
+ClientArena.start()
+Effects.start()
+CharacterController.start()
+CameraController.start()
+WeaponController.start()
+MobileControls.start()
+SettingsUI.start()
+PauseUI.start()
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="35">
+          <Properties>
+            <string name="Name">MobileControls</string>
+            <string name="Source"><![CDATA[--!strict
+-- On-screen controls for phones and tablets: a thumbstick on the left half of
+-- the screen to move and face, plus FIRE and SWAP (next weapon) buttons.
+
+local UserInputService = game:GetService("UserInputService")
+
+local Input = require(script.Parent.InputController)
+local UI = require(script.Parent.UI)
+
+local MobileControls = {}
+
+local STICK_RADIUS = 60
+local DEADZONE = 0.15
+
+function MobileControls.start()
+	local gui = UI.screen("MobileControls", 5)
+
+	-- Thumbstick: appears where the thumb lands anywhere on the left half.
+	local zone = Instance.new("Frame")
+	zone.Name = "MoveZone"
+	zone.BackgroundTransparency = 1
+	zone.Size = UDim2.fromScale(0.5, 1)
+	zone.Parent = gui
+
+	local base = Instance.new("Frame")
+	base.Name = "Stick"
+	base.AnchorPoint = Vector2.new(0.5, 0.5)
+	base.Size = UDim2.fromOffset(STICK_RADIUS * 2, STICK_RADIUS * 2)
+	base.BackgroundColor3 = UI.DARK
+	base.BackgroundTransparency = 0.55
+	UI.round(base, STICK_RADIUS)
+	base.Parent = zone
+	local restPosition = UDim2.new(0, 120, 1, -120)
+	base.Position = restPosition
+
+	local knob = Instance.new("Frame")
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Position = UDim2.fromScale(0.5, 0.5)
+	knob.Size = UDim2.fromOffset(56, 56)
+	knob.BackgroundColor3 = UI.WHITE
+	knob.BackgroundTransparency = 0.2
+	UI.round(knob, 28)
+	knob.Parent = base
+
+	local moveTouch: InputObject? = nil
+	local startPos = Vector2.zero
+
+	local function releaseStick()
+		moveTouch = nil
+		Input.setTouchMove(Vector3.zero)
+		base.Position = restPosition
+		knob.Position = UDim2.fromScale(0.5, 0.5)
+	end
+
+	zone.InputBegan:Connect(function(input: InputObject)
+		if moveTouch or input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		moveTouch = input
+		startPos = Vector2.new(input.Position.X, input.Position.Y)
+		base.Position = UDim2.fromOffset(startPos.X - zone.AbsolutePosition.X, startPos.Y - zone.AbsolutePosition.Y)
+	end)
+
+	UserInputService.TouchMoved:Connect(function(input: InputObject)
+		if input ~= moveTouch then
+			return
+		end
+		local offset = Vector2.new(input.Position.X, input.Position.Y) - startPos
+		if offset.Magnitude > STICK_RADIUS then
+			offset = offset.Unit * STICK_RADIUS
+		end
+		knob.Position = UDim2.new(0.5, offset.X, 0.5, offset.Y)
+		if offset.Magnitude / STICK_RADIUS < DEADZONE then
+			Input.setTouchMove(Vector3.zero)
+		else
+			-- Screen down is south (+Z) because the camera looks north.
+			Input.setTouchMove(Vector3.new(offset.X, 0, offset.Y) / STICK_RADIUS)
+		end
+	end)
+
+	-- FIRE: hold to keep shooting.
+	local fireButton = UI.button(gui, "FIRE", 28)
+	fireButton.AnchorPoint = Vector2.new(1, 1)
+	fireButton.Position = UDim2.new(1, -36, 1, -36)
+	fireButton.Size = UDim2.fromOffset(112, 112)
+	fireButton.BackgroundColor3 = Color3.fromRGB(196, 58, 40)
+	UI.round(fireButton, 56)
+
+	local fireTouch: InputObject? = nil
+	local function releaseFire()
+		fireTouch = nil
+		Input.setTouchFire(false)
+	end
+	fireButton.InputBegan:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			fireTouch = input
+			Input.setTouchFire(true)
+		end
+	end)
+
+	UserInputService.TouchEnded:Connect(function(input: InputObject)
+		if input == moveTouch then
+			releaseStick()
+		elseif input == fireTouch then
+			releaseFire()
+		end
+	end)
+
+	-- SWAP: next owned weapon.
+	local swapButton = UI.button(gui, "SWAP", 20)
+	swapButton.AnchorPoint = Vector2.new(1, 1)
+	swapButton.Position = UDim2.new(1, -164, 1, -36)
+	swapButton.Size = UDim2.fromOffset(76, 76)
+	UI.round(swapButton, 38)
+	swapButton.Activated:Connect(function()
+		Input.CycleWeapon:Fire(1)
+	end)
+
+	local function refresh()
+		gui.Enabled = Input.scheme == "Touch"
+		if not gui.Enabled then
+			releaseStick()
+			releaseFire()
+		end
+	end
+	Input.SchemeChanged:Connect(refresh)
+	refresh()
+end
+
+return MobileControls
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="36">
+          <Properties>
+            <string name="Name">PauseUI</string>
+            <string name="Source"><![CDATA[--!strict
+-- Sends P presses to the server and shows a PAUSED overlay while paused.
+-- Pausing only works with one player on the server.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Net = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Net"))
+local Input = require(script.Parent.InputController)
+local UI = require(script.Parent.UI)
+
+local PauseUI = {}
+
+function PauseUI.start()
+	local gui = UI.screen("Pause", 20)
+	gui.IgnoreGuiInset = true
+
+	local shade = Instance.new("Frame")
+	shade.Size = UDim2.fromScale(1, 1)
+	shade.BackgroundColor3 = Color3.new(0, 0, 0)
+	shade.BackgroundTransparency = 0.45
+	shade.Visible = false
+	shade.Parent = gui
+
+	local title = UI.text(shade, "PAUSED", 80)
+	title.AnchorPoint = Vector2.new(0.5, 0.5)
+	title.Position = UDim2.fromScale(0.5, 0.45)
+	title.Size = UDim2.fromOffset(600, 90)
+
+	local hint = UI.text(shade, "Press P to resume", 24)
+	hint.AnchorPoint = Vector2.new(0.5, 0)
+	hint.Position = UDim2.new(0.5, 0, 0.45, 56)
+	hint.Size = UDim2.fromOffset(600, 30)
+
+	local soloNote = UI.text(gui, "Pause only works when playing solo", 22)
+	soloNote.AnchorPoint = Vector2.new(0.5, 0)
+	soloNote.Position = UDim2.fromScale(0.5, 0.2)
+	soloNote.Size = UDim2.fromOffset(600, 30)
+	soloNote.Visible = false
+
+	local function refresh()
+		shade.Visible = workspace:GetAttribute("Paused") == true
+	end
+	workspace:GetAttributeChangedSignal("Paused"):Connect(refresh)
+	refresh()
+
+	local PauseRequest = Net.event("PauseRequest")
+	local noteToken = 0
+	Input.PausePressed:Connect(function()
+		if #Players:GetPlayers() == 1 then
+			PauseRequest:FireServer()
+			return
+		end
+		noteToken += 1
+		local token = noteToken
+		soloNote.Visible = true
+		task.delay(2, function()
+			if token == noteToken then
+				soloNote.Visible = false
+			end
+		end)
+	end)
+end
+
+return PauseUI
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="37">
+          <Properties>
+            <string name="Name">SettingsUI</string>
+            <string name="Source"><![CDATA[--!strict
+-- A SETTINGS button in the top right that opens a panel for switching
+-- between Classic (keys only) and Mouse aim controls, with a control cheat sheet.
+
+local Input = require(script.Parent.InputController)
+local UI = require(script.Parent.UI)
+
+local SettingsUI = {}
+
+local HELP: { [string]: string } = {
+	Classic = "WASD / Arrows: move and aim\nSpace: fire\n1-9, 0: pick weapon    Q / E: cycle\nP: pause (solo only)",
+	Mouse = "WASD / Arrows: move\nMouse: aim    Click or Space: fire\n1-9, 0: pick weapon    Q / E: cycle\nP: pause (solo only)",
+	Touch = "Left thumb: move and aim\nFIRE: shoot    SWAP: next weapon",
+}
+
+function SettingsUI.start()
+	local gui = UI.screen("Settings", 10)
+
+	local openButton = UI.button(gui, "SETTINGS", 16)
+	openButton.AnchorPoint = Vector2.new(1, 0)
+	openButton.Position = UDim2.new(1, -12, 0, 12)
+	openButton.Size = UDim2.fromOffset(110, 34)
+
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.fromScale(0.5, 0.5)
+	panel.Size = UDim2.fromOffset(380, 300)
+	panel.BackgroundColor3 = UI.PANEL
+	panel.BackgroundTransparency = 0.08
+	panel.Visible = false
+	UI.round(panel, 14)
+	panel.Parent = gui
+
+	local title = UI.text(panel, "SETTINGS", 30)
+	title.Position = UDim2.fromOffset(0, 12)
+	title.Size = UDim2.new(1, 0, 0, 36)
+
+	local controlsLabel = UI.text(panel, "CONTROLS", 18)
+	controlsLabel.Position = UDim2.fromOffset(0, 58)
+	controlsLabel.Size = UDim2.new(1, 0, 0, 24)
+
+	local classicButton = UI.button(panel, "CLASSIC", 20)
+	classicButton.Position = UDim2.fromOffset(20, 90)
+	classicButton.Size = UDim2.fromOffset(165, 40)
+
+	local mouseButton = UI.button(panel, "MOUSE AIM", 20)
+	mouseButton.Position = UDim2.fromOffset(195, 90)
+	mouseButton.Size = UDim2.fromOffset(165, 40)
+
+	local help = UI.text(panel, "", 16)
+	help.Position = UDim2.fromOffset(20, 142)
+	help.Size = UDim2.new(1, -40, 0, 100)
+	help.TextWrapped = true
+	help.TextYAlignment = Enum.TextYAlignment.Top
+
+	local closeButton = UI.button(panel, "CLOSE", 20)
+	closeButton.AnchorPoint = Vector2.new(0.5, 1)
+	closeButton.Position = UDim2.new(0.5, 0, 1, -14)
+	closeButton.Size = UDim2.fromOffset(140, 38)
+
+	local function refresh()
+		local touch = Input.scheme == "Touch"
+		classicButton.Visible = not touch
+		mouseButton.Visible = not touch
+		controlsLabel.Text = if touch then "TOUCH CONTROLS" else "CONTROLS"
+		classicButton.BackgroundColor3 = if Input.scheme == "Classic" then UI.ACCENT else UI.BUTTON
+		mouseButton.BackgroundColor3 = if Input.scheme == "Mouse" then UI.ACCENT else UI.BUTTON
+		help.Text = HELP[Input.scheme] or ""
+	end
+
+	openButton.Activated:Connect(function()
+		panel.Visible = not panel.Visible
+		refresh()
+	end)
+	closeButton.Activated:Connect(function()
+		panel.Visible = false
+	end)
+	classicButton.Activated:Connect(function()
+		Input.setScheme("Classic")
+	end)
+	mouseButton.Activated:Connect(function()
+		Input.setScheme("Mouse")
+	end)
+	Input.SchemeChanged:Connect(refresh)
+	refresh()
+end
+
+return SettingsUI
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="38">
+          <Properties>
+            <string name="Name">UI</string>
+            <string name="Source"><![CDATA[--!strict
+-- Shared look for every screen: chunky FredokaOne text, white with a dark outline.
+
+local Players = game:GetService("Players")
+
+local UI = {}
+
+UI.FONT = Enum.Font.FredokaOne
+UI.WHITE = Color3.new(1, 1, 1)
+UI.DARK = Color3.fromRGB(22, 22, 28)
+UI.PANEL = Color3.fromRGB(36, 36, 46)
+UI.BUTTON = Color3.fromRGB(60, 60, 74)
+UI.ACCENT = Color3.fromRGB(232, 170, 40)
+
+function UI.screen(name: string, displayOrder: number): ScreenGui
+	local gui = Instance.new("ScreenGui")
+	gui.Name = name
+	gui.ResetOnSpawn = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.DisplayOrder = displayOrder
+	gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+	return gui
+end
+
+function UI.round(object: GuiObject, radius: number)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius)
+	corner.Parent = object
+end
+
+function UI.text(parent: Instance, text: string, textSize: number): TextLabel
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Font = UI.FONT
+	label.Text = text
+	label.TextSize = textSize
+	label.TextColor3 = UI.WHITE
+	label.TextStrokeColor3 = UI.DARK
+	label.TextStrokeTransparency = 0
+	label.Parent = parent
+	return label
+end
+
+function UI.button(parent: Instance, text: string, textSize: number): TextButton
+	local button = Instance.new("TextButton")
+	button.AutoButtonColor = true
+	button.BackgroundColor3 = UI.BUTTON
+	button.Font = UI.FONT
+	button.Text = text
+	button.TextSize = textSize
+	button.TextColor3 = UI.WHITE
+	button.TextStrokeColor3 = UI.DARK
+	button.TextStrokeTransparency = 0
+	UI.round(button, 10)
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Color = UI.DARK
+	stroke.Thickness = 2
+	stroke.Parent = button
+	button.Parent = parent
+	return button
+end
+
+return UI
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="39">
+          <Properties>
+            <string name="Name">WeaponController</string>
+            <string name="Source"><![CDATA[--!strict
+-- The local player's weapons: picks the equipped weapon, fires while the fire
+-- input is held, draws the tracer instantly, and asks the server to shoot.
+-- Also draws other players' shots when the server reports them.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Config = require(Shared:WaitForChild("Config"))
+local Hitscan = require(Shared:WaitForChild("Hitscan"))
+local Net = require(Shared:WaitForChild("Net"))
+local Signal = require(Shared:WaitForChild("Signal"))
+local CharacterController = require(script.Parent.CharacterController)
+local ClientArena = require(script.Parent.ClientArena)
+local Effects = require(script.Parent.Effects)
+local EnemyView = require(script.Parent.EnemyView)
+local Input = require(script.Parent.InputController)
+
+local Fire = Net.event("Fire")
+local ShotFired = Net.event("ShotFired")
+local WeaponState = Net.event("WeaponState")
+
+local WeaponController = {}
+
+WeaponController.Changed = Signal.new() -- fires when the equipped weapon, owned list or ammo changes
+
+local equipped = "pistol"
+local owned: { [string]: boolean } = { pistol = true }
+local ammo: { [string]: number } = {}
+local nextShotAt = 0
+
+function WeaponController.getEquipped(): string
+	return equipped
+end
+
+function WeaponController.getAmmo(weaponId: string): number?
+	local weapon = Config.WEAPONS[weaponId]
+	if not weapon or weapon.maxAmmo == nil then
+		return nil -- infinite
+	end
+	return ammo[weaponId] or 0
+end
+
+local function ownedInSlotOrder(): { string }
+	local list = {}
+	for id in owned do
+		if Config.WEAPONS[id] then
+			table.insert(list, id)
+		end
+	end
+	table.sort(list, function(a, b)
+		return Config.WEAPONS[a].slot < Config.WEAPONS[b].slot
+	end)
+	return list
+end
+
+local function equip(weaponId: string)
+	if owned[weaponId] and Config.WEAPONS[weaponId] and weaponId ~= equipped then
+		equipped = weaponId
+		WeaponController.Changed:Fire()
+	end
+end
+
+local function fire()
+	local weapon = Config.WEAPONS[equipped]
+	local root = CharacterController.getRoot()
+	if not weapon or not root then
+		return
+	end
+	if weapon.maxAmmo ~= nil then
+		local left = ammo[equipped] or 0
+		if left <= 0 then
+			return
+		end
+		ammo[equipped] = left - 1
+		WeaponController.Changed:Fire()
+	end
+
+	local dir = CharacterController.getFacing()
+	local pos = root.Position
+	local y = pos.Y + Config.MUZZLE_HEIGHT
+	local muzzle = Vector3.new(pos.X + dir.X * Config.MUZZLE_FORWARD, y, pos.Z + dir.Z * Config.MUZZLE_FORWARD)
+
+	-- Predict where the bullet stops, the same way the server will.
+	local grid = ClientArena.grid()
+	local maxDist = if grid then grid:raycast(pos.X, pos.Z, dir.X, dir.Z, weapon.range) else weapon.range
+	local _, travel = Hitscan.cast(pos.X, pos.Z, dir.X, dir.Z, maxDist, EnemyView.getTargets(), EnemyView.circleOf, weapon.pierce)
+
+	Effects.muzzleFlash(muzzle)
+	if travel > Config.MUZZLE_FORWARD then
+		Effects.tracer(muzzle, Vector3.new(pos.X + dir.X * travel, y, pos.Z + dir.Z * travel), weapon.tracerColor)
+	end
+	Fire:FireServer(equipped, dir.X, dir.Z)
+end
+
+local function update()
+	if not Input.isFireHeld() or workspace:GetAttribute("Paused") == true or not CharacterController.isAlive() then
+		return
+	end
+	local weapon = Config.WEAPONS[equipped]
+	local now = os.clock()
+	if weapon and now >= nextShotAt then
+		nextShotAt = now + weapon.fireInterval
+		fire()
+	end
+end
+
+local function onWeaponState(ownedList: { string }, ammoTable: { [string]: number })
+	owned = {}
+	for _, id in ownedList do
+		owned[id] = true
+	end
+	ammo = ammoTable
+	if not owned[equipped] then
+		equipped = "pistol"
+	end
+	WeaponController.Changed:Fire()
+end
+
+local function onShotFired(shooter: Player, weaponId: string, muzzle: Vector3, endpoints: { Vector3 })
+	if shooter == Players.LocalPlayer then
+		return -- already drawn when we fired
+	end
+	local weapon = Config.WEAPONS[weaponId]
+	if not weapon then
+		return
+	end
+	Effects.muzzleFlash(muzzle)
+	for _, point in endpoints do
+		Effects.tracer(muzzle, point, weapon.tracerColor)
+	end
+end
+
+function WeaponController.start()
+	Input.WeaponSlot:Connect(function(slot: number)
+		for id in owned do
+			local weapon = Config.WEAPONS[id]
+			if weapon and weapon.slot == slot then
+				equip(id)
+				return
+			end
+		end
+	end)
+	Input.CycleWeapon:Connect(function(step: number)
+		local list = ownedInSlotOrder()
+		if #list == 0 then
+			return
+		end
+		local index = table.find(list, equipped) or 1
+		equip(list[(index - 1 + step) % #list + 1])
+	end)
+	WeaponState.OnClientEvent:Connect(onWeaponState)
+	ShotFired.OnClientEvent:Connect(onShotFired)
+	RunService.Heartbeat:Connect(update)
+end
+
+return WeaponController
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="40">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="NeedsPivotMigration">false</bool>
+      <bool name="StreamingEnabled">false</bool>
+    </Properties>
+  </Item>
+</roblox>
