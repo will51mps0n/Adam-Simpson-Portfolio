@@ -592,6 +592,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
 
+local FREE_SHOP = true -- for testing: everything in the shop costs nothing. false = charge each item's Price
 local START_COINS = 40
 local INCOME = 1 -- every hider in the cave earns this many coins...
 local INCOME_EVERY = 5 -- ...every this many seconds
@@ -637,12 +638,12 @@ local templates = ServerStorage:WaitForChild("CaveHunt_Tools", 10)
 for _, tool in ipairs(templates and templates:GetChildren() or {}) do
 	local key, price = tool:GetAttribute("Item"), tool:GetAttribute("Price")
 	if tool:IsA("Tool") and type(key) == "string" and type(price) == "number" then
-		local item = { key = key, template = tool, name = tool.Name, price = price, who = tool:GetAttribute("Who") or "Any" }
+		local item = { key = key, template = tool, name = tool.Name, price = FREE_SHOP and 0 or price, who = tool:GetAttribute("Who") or "Any" }
 		SHOP[key] = item
 		local entry = Instance.new("Configuration")
 		entry.Name = key
 		entry:SetAttribute("Name", item.name)
-		entry:SetAttribute("Price", price)
+		entry:SetAttribute("Price", item.price)
 		entry:SetAttribute("Who", item.who)
 		entry:SetAttribute("Tip", tool.ToolTip)
 		entry:SetAttribute("Order", tool:GetAttribute("Order") or 99)
@@ -1468,7 +1469,7 @@ task.spawn(function()
 		for _, r in ipairs(rows) do
 			local hidersOnly = r.who == "Hider" and isMonster()
 			local can = not hidersOnly and coins.Value >= r.price
-			r.button.Text = hidersOnly and "Hiders only" or ("%d coins"):format(r.price)
+			r.button.Text = hidersOnly and "Hiders only" or r.price == 0 and "Free" or ("%d coins"):format(r.price)
 			r.button.AutoButtonColor = can
 			r.button.BackgroundColor3 = can and Color3.fromRGB(46, 120, 60) or Color3.fromRGB(55, 55, 62)
 		end

@@ -53,6 +53,8 @@ Press **Play**. You spawn in Base Camp as a **hider**. The **Play as Monster** b
 - **Coin pickups:** about 10 glowing gold coins lie in front of random hiding spots. Walk into one for +5. New ones keep appearing.
 - **The monster:** +15 for catching a hider, +5 for pulling one out of a hiding spot. Coins stay with you when you switch back to hider.
 
+**Everything in the shop is free for now** (for testing). The prices below kick in when you set `FREE_SHOP = false` at the top of `ServerScriptService.CaveHunt_Shop`. Running the command again sets it back to free.
+
 **The shop:** click the **Shop** button under the role button, or press **B**. Bought items go in your hotbar. Each use spends one, and buying the same thing again stacks it ("Glowstick x3"). Items stay in your hotbar after you die. The monster can only buy the items marked "anyone".
 
 | Item | Price | Who | What it does |
@@ -68,7 +70,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The **Play as Monster** b
 
 Except for Snitch and Fake Noise, items can't be used while you're hiding.
 
-**Changing prices:** the items are Tools in **ServerStorage → CaveHunt_Tools**. Select one and change its `Price` attribute in the Properties window. `Who` is `Hider` (hiders only) or `Any`. Running the command again resets them.
+**Changing prices** (used once `FREE_SHOP` is `false`): the items are Tools in **ServerStorage → CaveHunt_Tools**. Select one and change its `Price` attribute in the Properties window. `Who` is `Hider` (hiders only) or `Any`. Running the command again resets them.
 
 **Changing the coin amounts:** see the top of `ServerScriptService.CaveHunt_Shop`: `START_COINS`, `INCOME`, `INCOME_EVERY`, `REWARDS`, `PICKUPS` and `PICKUP_VALUE`.
 
