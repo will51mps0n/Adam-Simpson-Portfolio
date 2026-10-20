@@ -5,16 +5,21 @@
 	Copies your models onto the PropSpot markers that CaveBuilder left
 	around the cave. Run CaveBuilder first.
 
-	SETUP (once):
-	  1. In ServerStorage, make a Folder called  CaveAssets
-	  2. Inside it, make two Folders:  Hiding  and  Decor
-	       Hiding = things players can hide in (shelves, container, ...)
-	       Decor  = decoration only
-	  3. Drag your models into those folders. Big ones (like your big
-	     room) go in Decor, or in Hiding if people can hide inside them.
-	     Optional: give a model a number attribute "Count" to choose how
-	     many copies get placed (default 3 for hiding, 2 for decor, 1 for
-	     anything bigger than 30 studs).
+	YOUR MODELS: the first time it runs, it picks up the models sitting in
+	your Workspace and moves them into ServerStorage.CaveAssets, sorted into
+	  Hiding = things players can hide in (anything at least 5 studs tall
+	           and up to 30 studs across)
+	  Decor  = everything else, including big things like your big room
+	It leaves alone: the Baseplate, SpawnLocations, the CaveSystem, and
+	anything with a Humanoid or "monster" in its name (your monster).
+	Copies of the models in those folders are what get put in the cave.
+
+	If it guessed wrong, drag the model to the other folder and run again.
+	Add new models later by dragging them into those folders.
+	Optional attributes on a model:
+	  Count    (number) how many copies to place (default 3 hiding / 2
+	           decor / 1 for anything bigger than 30 studs)
+	  CaveRole (string) "Hiding", "Decor" or "Skip" (leave it in Workspace)
 
 	RUN: use the one-line Command Bar command in README.md (or paste
 	this whole file into the Command Bar). Run it again any time to
@@ -31,6 +36,7 @@ local DEFAULTS = {
 	HIDING_COPIES = 3,
 	DECOR_COPIES = 2,
 	BIG = 30, -- studs across; anything bigger is placed once unless it has a Count attribute
+	COLLECT_FROM_WORKSPACE = "auto", -- "auto" = only the first time (before CaveAssets exists); true = always; false = never
 }
 
 local function run(options)
@@ -51,12 +57,6 @@ local function run(options)
 		warn("[PlaceAssets] Workspace.CaveSystem.PropSpots not found. Run CaveBuilder first.")
 		return false
 	end
-	local source = ServerStorage:FindFirstChild("CaveAssets") or workspace:FindFirstChild("CaveAssets")
-	if not source then
-		warn("[PlaceAssets] Make a Folder called CaveAssets in ServerStorage with Hiding and Decor folders inside, and put your models in them.")
-		return false
-	end
-
 	local rng = CONFIG.SEED and Random.new(CONFIG.SEED) or Random.new()
 
 	local function partsOf(inst)
@@ -91,8 +91,116 @@ local function run(options)
 		return lo, hi
 	end
 
+	-- widest the model can be at any rotation (the diagonal of its tightest box
+	-- seen from above). Measured per model so a rotated model isn't over-sized.
+	local function footprintOf(inst)
+		local corners = {}
+		for _, p in ipairs(partsOf(inst)) do
+			local h = p.Size / 2
+			for _, sx in ipairs({ -1, 1 }) do
+				for _, sz in ipairs({ -1, 1 }) do
+					for _, sy in ipairs({ -1, 1 }) do
+						table.insert(corners, p.CFrame * Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
+					end
+				end
+			end
+		end
+		local best = math.huge
+		for step = 0, 11 do
+			local a = step * math.pi / 12
+			local ca, sa = math.cos(a), math.sin(a)
+			local x0, x1, z0, z1 = math.huge, -math.huge, math.huge, -math.huge
+			for _, c in ipairs(corners) do
+				local x, z = c.X * ca - c.Z * sa, c.X * sa + c.Z * ca
+				x0, x1, z0, z1 = math.min(x0, x), math.max(x1, x), math.min(z0, z), math.max(z1, z)
+			end
+			best = math.min(best, math.sqrt((x1 - x0) ^ 2 + (z1 - z0) ^ 2))
+		end
+		return best
+	end
+
 	local function yawOf(look) -- heading angle of a look vector
 		return math.atan2(-look.X, -look.Z)
+	end
+
+	-- the template library: ServerStorage.CaveAssets/Hiding + /Decor
+	local source = ServerStorage:FindFirstChild("CaveAssets") or workspace:FindFirstChild("CaveAssets")
+	local collectNow = CONFIG.COLLECT_FROM_WORKSPACE
+	if collectNow == "auto" then
+		collectNow = source == nil
+	end
+	if not source then
+		source = Instance.new("Folder")
+		source.Name = "CaveAssets"
+		source.Parent = ServerStorage
+	end
+	local function folderFor(role)
+		local f = source:FindFirstChild(role)
+		if not f then
+			f = Instance.new("Folder")
+			f.Name = role
+			f.Parent = source
+		end
+		return f
+	end
+	folderFor("Hiding")
+	folderFor("Decor")
+
+	-- pick up the models already sitting in Workspace
+	if collectNow then
+		local found = {}
+		local function consider(inst)
+			if inst == cave or inst:IsA("Terrain") or inst:IsA("Camera") or inst:IsA("SpawnLocation") or inst.Name == "Baseplate" then
+				return
+			end
+			if inst:IsA("Folder") then
+				if inst.Name ~= "CaveAssets" then
+					for _, c in ipairs(inst:GetChildren()) do
+						consider(c)
+					end
+				end
+			elseif inst:IsA("Model") or inst:IsA("BasePart") then
+				table.insert(found, inst)
+			end
+		end
+		for _, c in ipairs(workspace:GetChildren()) do
+			consider(c)
+		end
+
+		local moved, leftAlone = { Hiding = {}, Decor = {} }, {}
+		for _, inst in ipairs(found) do
+			local role = inst:GetAttribute("CaveRole")
+			local lo, hi = bounds(inst)
+			local size = hi - lo
+			local why
+			if role == "Skip" then
+				why = "CaveRole is Skip"
+			elseif inst:FindFirstChildWhichIsA("Humanoid", true) or inst:FindFirstChildWhichIsA("AnimationController", true) or inst.Name:lower():find("monster") then
+				why = "looks like a character or your monster"
+			elseif lo.X == math.huge then
+				why = "has no parts"
+			elseif inst:IsA("BasePart") and size.Y < 1 then
+				why = "flat part"
+			elseif math.max(size.X, size.Z) > 400 then
+				why = "too big for the cave"
+			end
+			if why then
+				table.insert(leftAlone, inst.Name .. " (" .. why .. ")")
+			else
+				if role ~= "Hiding" and role ~= "Decor" then
+					role = (footprintOf(inst) <= CONFIG.BIG and size.Y >= 5) and "Hiding" or "Decor"
+				end
+				inst.Parent = folderFor(role)
+				table.insert(moved[role], inst.Name)
+			end
+		end
+		print("[PlaceAssets] Moved your models from Workspace into ServerStorage.CaveAssets:")
+		print("    Hiding: " .. (#moved.Hiding > 0 and table.concat(moved.Hiding, ", ") or "(none)"))
+		print("    Decor:  " .. (#moved.Decor > 0 and table.concat(moved.Decor, ", ") or "(none)"))
+		if #leftAlone > 0 then
+			print("    Left in Workspace: " .. table.concat(leftAlone, ", "))
+		end
+		print("    Wrong folder? Drag it to the other one in ServerStorage.CaveAssets and run this again.")
 	end
 
 	-- what to place
@@ -108,7 +216,7 @@ local function run(options)
 					table.insert(skippedEmpty, asset.Name)
 				else
 					local size = hi - lo
-					local footprint = math.sqrt(size.X ^ 2 + size.Z ^ 2) -- widest it can be at any rotation
+					local footprint = footprintOf(asset)
 					local count = asset:GetAttribute("Count")
 					if type(count) ~= "number" then
 						count = footprint > CONFIG.BIG and 1 or (hiding and CONFIG.HIDING_COPIES or CONFIG.DECOR_COPIES)
@@ -125,7 +233,7 @@ local function run(options)
 	collect(source, false) -- models dropped straight into CaveAssets count as decor
 
 	if #jobs == 0 then
-		warn("[PlaceAssets] No models found in CaveAssets/Hiding or CaveAssets/Decor.")
+		warn("[PlaceAssets] No models to place. Put models in ServerStorage.CaveAssets.Hiding / Decor, or run with require(M)({ COLLECT_FROM_WORKSPACE = true }) to pick them up from Workspace.")
 		return false
 	end
 

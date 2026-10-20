@@ -1107,13 +1107,15 @@ local function run(options)
 		end
 	end
 
+	-- floor space saved for YOUR models (PlaceAssets). Rooms call this right
+	-- after their main structures, so these get first pick of the free floor.
 	local function addPropSpots(room, n)
 		for _ = 1, n do
-			local p, c = findSpot(room, 5, { tries = 80, best = true })
+			local p, c = findSpot(room, 5, { tries = 150, best = true })
 			if not p then
 				return
 			end
-			local r = math.min(c, 14)
+			local r = math.min(c, 16)
 			reserve(room, p, r)
 			makePropSpot(room, p, r * 2, math.min(room.h * 0.6, 26), "Small")
 		end
@@ -1166,10 +1168,10 @@ local function run(options)
 		tryPlace(room, 4.5, { rhoMin = 0.25, rhoMax = 0.5 }, function(p)
 			buildSign(placeAt(room, p), "BASE CAMP")
 		end)
+		addPropSpots(room, 2)
 		addLanterns(room, 5)
 		addClutter(room, 4)
 		addHidingSpots(room, 1, { "Locker" })
-		addPropSpots(room, 2)
 	end
 
 	function DRESS.GreatCavern(room)
@@ -1180,12 +1182,12 @@ local function run(options)
 			end)
 		end
 		addPillars(room, 3, 6, 9)
-		addHidingSpots(room, 5)
+		addPropSpots(room, 6)
+		addHidingSpots(room, 4)
 		addBoulders(room, 4, 4, 7)
 		addStalagmites(room, 8)
 		addLanterns(room, 7)
-		addClutter(room, 4)
-		addPropSpots(room, 4)
+		addClutter(room, 3)
 	end
 
 	function DRESS.OldMine(room)
@@ -1206,11 +1208,11 @@ local function run(options)
 				buildMineSupport(placeAt(room, p))
 			end)
 		end
+		addPropSpots(room, 4)
 		addHidingSpots(room, 2, { "Locker" })
 		addHidingSpots(room, 1, { "Crate", "Barrel" })
-		addClutter(room, 6)
+		addClutter(room, 5)
 		addLanterns(room, 2)
-		addPropSpots(room, 3)
 	end
 
 	function DRESS.CrystalGrotto(room)
@@ -1219,6 +1221,7 @@ local function run(options)
 				buildCrystals(placeAt(room, p, p + randDir()), rand(1.6, 2.2), pick({ C.crystalA, C.crystalB }))
 			end)
 		end
+		addPropSpots(room, 3)
 		for _ = 1, 12 do
 			tryPlace(room, 3.5, { reserve = 4.5 }, function(p)
 				buildCrystals(placeAt(room, p, p + randDir()), rand(0.6, 1.1), pick({ C.crystalA, C.crystalB }))
@@ -1227,7 +1230,6 @@ local function run(options)
 		addBoulders(room, 3, 4, 6)
 		addHidingSpots(room, 3, { "Crate", "Barrel" })
 		addLanterns(room, 2)
-		addPropSpots(room, 3)
 	end
 
 	function DRESS.ShackTown(room)
@@ -1242,10 +1244,10 @@ local function run(options)
 			end)
 		end
 		addLargeSpot(room)
+		addPropSpots(room, 5)
 		addHidingSpots(room, 2, { "Barrel", "Crate" })
 		addLanterns(room, 6)
-		addClutter(room, 6)
-		addPropSpots(room, 4)
+		addClutter(room, 5)
 	end
 
 	function DRESS.SunkenLake(room)
@@ -1269,12 +1271,12 @@ local function run(options)
 		tryPlace(room, 12, { rhoMin = 0.4, rhoMax = 0.85 }, function(q)
 			buildShack(placeAt(room, q))
 		end)
+		addPropSpots(room, 4)
 		addHidingSpots(room, 3)
 		addStalagmites(room, 6)
 		addBoulders(room, 2, 4, 6)
 		addLanterns(room, 4)
 		addClutter(room, 2)
-		addPropSpots(room, 3)
 	end
 
 	function DRESS.TheAbyss(room)
@@ -1287,11 +1289,11 @@ local function run(options)
 			end)
 		end
 		addPillars(room, 4, 7, 11)
+		addPropSpots(room, 4)
 		addHidingSpots(room, 4)
 		addBoulders(room, 5, 4, 8)
 		addStalagmites(room, 10)
 		addLanterns(room, 3, { brightness = 0.9 })
-		addPropSpots(room, 3)
 	end
 
 	local function dressLair(room)
