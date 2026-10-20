@@ -21,7 +21,7 @@
 	Add new models later by dragging them into those folders.
 	Optional attributes on a model:
 	  Count    (number) how many copies to place (default up to 6 hiding /
-	           2 decor / 1 for anything bigger than 30 studs)
+	           4 decor / 1 for anything bigger than 30 studs)
 	  CaveRole (string) "Hiding", "Decor" or "Skip" (leave it in Workspace)
 
 	RUN: use the one-line Command Bar command in README.md (or paste
@@ -37,7 +37,7 @@
 local DEFAULTS = {
 	SEED = false, -- false = a new arrangement every run. Put a number to get the same one each time
 	HIDING_COPIES = 6,
-	DECOR_COPIES = 2,
+	DECOR_COPIES = 4,
 	BIG = 30, -- studs across; anything bigger is placed once unless it has a Count attribute
 	COLLECT_FROM_WORKSPACE = "auto", -- "auto" = only the first time (before CaveAssets exists); true = always; false = never
 	ASSET_LIGHT_SCALE = 0.35, -- lights inside your models are dimmed to this much in the cave (1 = as bright as you made them)
@@ -77,11 +77,24 @@ local function run(options)
 			return list
 		end
 
-		-- world-space box around everything (works for any pivot/orientation)
-		local function bounds(inst)
+		-- world-space box around its parts (works for any pivot/orientation). visibleOnly skips
+		-- invisible helper parts (hitboxes, roots) so they can't push the model into the floor
+		local function bounds(inst, visibleOnly)
 			local lo = Vector3.new(math.huge, math.huge, math.huge)
 			local hi = -lo
-			for _, p in ipairs(partsOf(inst)) do
+			local list = partsOf(inst)
+			if visibleOnly then
+				local seen = {}
+				for _, p in ipairs(list) do
+					if p.Transparency < 0.99 then
+						table.insert(seen, p)
+					end
+				end
+				if #seen > 0 then
+					list = seen
+				end
+			end
+			for _, p in ipairs(list) do
 				local h = p.Size / 2
 				for _, sx in ipairs({ -1, 1 }) do
 					for _, sy in ipairs({ -1, 1 }) do
@@ -237,25 +250,14 @@ local function run(options)
 			print("    Wrong folder? Drag it to the other one in ServerStorage.CaveAssets and run this again.")
 		end
 
-		-- How high a model's pivot sat above the ground it stood on. Placing it at the same
-	-- height keeps it looking right even when a mesh sticks out of its part's box.
-	local function floorOffsetOf(asset, lo, hi)
-		local v = asset:GetAttribute("FloorOffset")
-		if type(v) == "number" then
-			return v
+		-- How high a model's pivot sat above the ground it stood on (measured when it was picked
+		-- up from Workspace). Used to lift a model a little when a mesh sticks out below its part.
+		local function floorOffsetOf(asset)
+			local v = asset:GetAttribute("FloorOffset")
+			return type(v) == "number" and v or nil
 		end
-		-- models an earlier version already moved here: they were standing on the Baseplate
-		local bp = workspace:FindFirstChild("Baseplate")
-		if bp and bp:IsA("BasePart") then
-			local top = bp.Position.Y + bp.Size.Y / 2
-			if hi.Y > top and lo.Y < top + 6 then
-				return asset:GetPivot().Y - top
-			end
-		end
-		return nil
-	end
 
-	-- what to place. Models with the same name count as one design (your 6 Closets are
+		-- what to place. Models with the same name count as one design (your 6 Closets are
 		-- 6 copies of a closet, not 6 designs x 3 copies each).
 		local jobs, skippedEmpty = {}, {}
 		local function collect(folder, hiding)
@@ -273,7 +275,7 @@ local function run(options)
 							groups[asset.Name] = {}
 							table.insert(order, asset.Name)
 						end
-						table.insert(groups[asset.Name], { asset = asset, footprint = footprintOf(asset), height = (hi - lo).Y, offset = floorOffsetOf(asset, lo, hi) })
+						table.insert(groups[asset.Name], { asset = asset, footprint = footprintOf(asset), height = (hi - lo).Y, offset = floorOffsetOf(asset) })
 					end
 				end
 			end
@@ -402,15 +404,34 @@ local function run(options)
 					local turn = wantYaw - yawOf(pivot.LookVector)
 					clone:PivotTo(CFrame.new(at) * CFrame.Angles(0, turn, 0) * pivot.Rotation)
 
-					-- then slide it over the spot, at the same height it stood at before
-					-- (or with the bottom of its box on the floor if we don't know that)
-					local lo, hi = bounds(clone)
+					-- then slide it over the spot
+					local lo, hi = bounds(clone, true)
 					local center = (lo + hi) / 2
-					local lift = at.Y - lo.Y - 0.05
-					if job.offset and lo.Y + job.offset > at.Y - 4 then
-						lift = job.offset
+					clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, 0, at.Z - center.Z))
+					lo, hi = bounds(clone, true)
+
+					-- and stand its visible bottom on the highest bit of floor under it, so no
+					-- part of it is ever below the floor
+					local floorY = at.Y
+					local rayParams = RaycastParams.new()
+					rayParams.FilterType = Enum.RaycastFilterType.Include
+					rayParams.FilterDescendantsInstances = { workspace.Terrain }
+					for _, xz in ipairs({ { 0.5, 0.5 }, { 0.1, 0.1 }, { 0.9, 0.1 }, { 0.1, 0.9 }, { 0.9, 0.9 } }) do
+						local x = lo.X + (hi.X - lo.X) * xz[1]
+						local z = lo.Z + (hi.Z - lo.Z) * xz[2]
+						local hit = workspace:Raycast(Vector3.new(x, at.Y + 12, z), Vector3.new(0, -24, 0), rayParams)
+						if hit and math.abs(hit.Position.Y - at.Y) < 4 then
+							floorY = math.max(floorY, hit.Position.Y)
+						end
 					end
-					clone:PivotTo(clone:GetPivot() + Vector3.new(at.X - center.X, lift, at.Z - center.Z))
+					local lift = floorY - lo.Y + 0.02
+					if job.offset then -- a mesh that hung below its part on your Baseplate: keep that gap (a few studs at most)
+						local pivotLift = (at.Y + job.offset) - clone:GetPivot().Y
+						if pivotLift > lift and pivotLift < lift + 3 then
+							lift = pivotLift
+						end
+					end
+					clone:PivotTo(clone:GetPivot() + Vector3.new(0, lift, 0))
 
 					if job.hiding then
 						lo, hi = bounds(clone)

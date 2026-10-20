@@ -4,19 +4,21 @@
 	==================================================================
 	Carves a cave network for a monster hide-and-seek game.
 
-	  * 7 themed rooms + 5 monster lairs, joined by winding tunnels
-	    (lots of loops so survivors can run circles around the monster)
-	  * small side "nooks" off the tunnels, each with a hiding spot
+	  * 4 rooms (Base Camp, Great Cavern, Old Mine, Crystal Grotto) joined
+	    by winding tunnels in two loops, so hiders can run circles around
+	    the monster
+	  * small side "nooks" off the tunnels
 	  * Base Camp with the player SpawnLocation
-	  * 5 MonsterSpawn points in lairs far away from Base Camp
-	  * hiding spots: lockers, wardrobes, barrels, crates, mine carts,
-	    outhouses, and a wardrobe inside every shack
-	  * shacks, lanterns, crystals, a campfire, an underground lake,
-	    mine supports + rails, scaffolds with ladders, boulders, pillars
-	  * invisible PropSpot markers where PlaceAssets.lua drops YOUR models
+	  * MonsterSpawn points at the far ends of the other three rooms
+	  * a few hiding spots of my own: mine carts, a locker, a wardrobe in
+	    each shack, a barrel up a climbable scaffold
+	  * shacks, crystals, a campfire, mine supports + rails, barricades,
+	    boulders, pillars, floating dust, very few (dim) lights
+	  * lots of invisible PropSpot markers where PlaceAssets.lua puts YOUR
+	    models: in every room, along the tunnels and in the nooks
 
 	Everything is put in Workspace.CaveSystem. The caves are carved inside
-	a big block of rock (800 x 200 x 800 studs) in the middle of the
+	a big block of rock (720 x 200 x 720 studs) in the middle of the
 	Baseplate. Anything else in Workspace that would end up inside the rock
 	is lifted onto the top of it, so nothing gets buried.
 
@@ -68,7 +70,7 @@ local function run(options)
 
 		local M = Enum.Material
 		local AIR, ROCK = M.Air, M.Slate
-		local HALF = 400 -- the rock block is 800 x 800 studs
+		local HALF = 360 -- the rock block is 720 x 720 studs
 		local ROCK_BOTTOM, ROCK_TOP = -64, 136 -- Y range of the rock block, relative to ORIGIN
 		local LANE_HALF = 8 -- keep walking lanes this wide (each side) clear of props inside rooms
 
@@ -192,17 +194,15 @@ local function run(options)
 		-- Layout. Positions are relative to ORIGIN. pos.Y is the floor height.
 		-- +Z is "south" (Base Camp), -Z is "north" (the lairs).
 		------------------------------------------------------------------------
+		-- Base Camp in the south, the Great Cavern in the middle, the Old Mine and Crystal
+		-- Grotto out in the far corners. monsterSpawn = a MonsterSpawn at the room's far end.
+		-- (Other room kinds still work if you add them: kind = "Lair" for a monster lair,
+		-- kind = "Maze" with a cell size for the Backrooms.)
 		local ROOMS = {
-			{ name = "BaseCamp", kind = "Spawn", pos = Vector3.new(0, 0, 230), rx = 40, rz = 34, h = 32, floor = M.Ground },
-			{ name = "GreatCavern", kind = "Big", pos = Vector3.new(0, -8, 40), rx = 105, rz = 80, h = 60, floor = M.Ground },
-			{ name = "OldMine", kind = "Room", pos = Vector3.new(-190, 0, 170), rx = 52, rz = 40, h = 30, floor = M.Ground, wall = M.Sandstone },
-			{ name = "CrystalGrotto", kind = "Room", pos = Vector3.new(190, 4, 170), rx = 48, rz = 42, h = 40, floor = M.Rock, wall = M.Basalt },
-			{ name = "ShackTown", kind = "Big", pos = Vector3.new(-200, -8, -130), rx = 72, rz = 56, h = 42, floor = M.Ground },
-			-- the cave breaks into the Backrooms: a wallpaper maze, rectangular, 9 x 10 cells of 14 studs
-			{ name = "Backrooms", kind = "Maze", pos = Vector3.new(200, -4, -135), rx = 63, rz = 70, h = 12, floor = M.Ground, wall = M.Basalt, cell = 14 },
-			{ name = "LairWest", kind = "Lair", pos = Vector3.new(-330, 0, 20), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			{ name = "LairEast", kind = "Lair", pos = Vector3.new(330, 4, 20), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
-			{ name = "LairNorth", kind = "Lair", pos = Vector3.new(0, -12, -260), rx = 26, rz = 26, h = 26, floor = M.Mud, wall = M.Basalt },
+			{ name = "BaseCamp", kind = "Spawn", pos = Vector3.new(0, 0, 180), rx = 40, rz = 34, h = 32, floor = M.Ground },
+			{ name = "GreatCavern", kind = "Big", pos = Vector3.new(0, -8, 0), rx = 105, rz = 80, h = 60, floor = M.Ground, monsterSpawn = true },
+			{ name = "OldMine", kind = "Room", pos = Vector3.new(-250, 0, -60), rx = 56, rz = 44, h = 30, floor = M.Ground, wall = M.Sandstone, monsterSpawn = true },
+			{ name = "CrystalGrotto", kind = "Room", pos = Vector3.new(250, 4, -60), rx = 52, rz = 46, h = 40, floor = M.Rock, wall = M.Basalt, monsterSpawn = true },
 		}
 
 		-- { from, to, radius, lantern every N studs (nil = pitch dark) }
@@ -212,15 +212,6 @@ local function run(options)
 			{ "BaseCamp", "CrystalGrotto", 11, 70 },
 			{ "OldMine", "GreatCavern", 11, 80 },
 			{ "CrystalGrotto", "GreatCavern", 11, 80 },
-			{ "GreatCavern", "ShackTown", 12, 75 },
-			{ "GreatCavern", "Backrooms", 12, nil },
-			{ "GreatCavern", "LairNorth", 11, 120 },
-			{ "ShackTown", "LairNorth", 10, 120 },
-			{ "Backrooms", "LairNorth", 10, nil },
-			{ "OldMine", "LairWest", 10, 120 },
-			{ "ShackTown", "LairWest", 10, 120 },
-			{ "CrystalGrotto", "LairEast", 10, 120 },
-			{ "Backrooms", "LairEast", 10, nil },
 		}
 
 		local rooms, ROOM = {}, {}
@@ -494,7 +485,7 @@ local function run(options)
 		end
 		table.sort(liftedNames)
 
-		local CHUNK = 200
+		local CHUNK = 240
 		for x = -HALF, HALF - CHUNK, CHUNK do
 			for z = -HALF, HALF - CHUNK, CHUNK do
 				Terrain:FillBlock(
@@ -806,20 +797,6 @@ local function run(options)
 				end
 			end
 			return finishHide(m, "Minecart", cf, CFrame.new(0, 3, 0), CFrame.new(-4.5, 3, 0), parent)
-		end
-
-		local function buildOuthouse(cf, parent)
-			local m = newModel("Outhouse")
-			local w, d, h = 4.6, 4.6, 8
-			local midY = 0.4 + h / 2
-			P(m, Vector3.new(w, 0.4, d), cf * CFrame.new(0, 0.2, 0), C.darkWood, M.WoodPlanks).Name = "Base"
-			P(m, Vector3.new(w, h, 0.3), cf * CFrame.new(0, midY, d / 2 - 0.15), C.wood, M.WoodPlanks)
-			P(m, Vector3.new(0.3, h, d), cf * CFrame.new(-w / 2 + 0.15, midY, 0), C.wood, M.WoodPlanks)
-			P(m, Vector3.new(0.3, h, d), cf * CFrame.new(w / 2 - 0.15, midY, 0), C.wood, M.WoodPlanks)
-			P(m, Vector3.new(w - 0.6, h - 0.3, 0.25), cf * CFrame.new(0, 0.4 + (h - 0.3) / 2, -d / 2 + 0.12), C.plank, M.WoodPlanks).Name = "Door"
-			P(m, Vector3.new(0.7, 0.7, 0.05), cf * CFrame.new(0, h - 1.2, -d / 2 - 0.03), C.dark, M.SmoothPlastic, { CanCollide = false })
-			beam(m, (cf * CFrame.new(0, h + 1.1, -d / 2 - 0.6)).Position, (cf * CFrame.new(0, h + 0.4, d / 2 + 0.6)).Position, w + 0.8, 0.3, C.roof, M.CorrodedMetal)
-			return finishHide(m, "Outhouse", cf, CFrame.new(0, 3, 0.2), CFrame.new(0, 3, -d / 2 - 3), parent)
 		end
 
 		local HIDE_BUILDERS = {
@@ -1231,7 +1208,7 @@ local function run(options)
 		-- after their main structures, so these get first pick of the free floor.
 		local function addPropSpots(room, n)
 			for _ = 1, n do
-				local p, c = findSpot(room, 5, { tries = 150, best = true })
+				local p, c = findSpot(room, 4, { tries = 150, best = true })
 				if not p then
 					return
 				end
@@ -1241,16 +1218,23 @@ local function run(options)
 			end
 		end
 
-		local function addMonsterSpawn(room)
-			local c = flat(room.pos)
-			reserve(room, c, 6)
-			local cf = placeAt(room, c, room.entrances[1])
+		local function addMonsterSpawn(room, c)
+			c = c or flat(room.pos)
+			reserve(room, c, 7)
+			local cf = placeAt(room, c, room.entrances[1] or flat(room.pos))
 			local s = marker(F.monster, "MonsterSpawn_" .. room.name, cf * CFrame.new(0, 0.5, 0), Vector3.new(8, 1, 8))
 			s:SetAttribute("Room", room.name)
 			s:SetAttribute("DistanceFromPlayerSpawn", math.floor((c - flat(ROOM.BaseCamp.pos)).Magnitude))
 			CollectionService:AddTag(s, "MonsterSpawn")
 			stats.monster += 1
 			addLight(marker(F.lights, "LairGlow", cf * CFrame.new(0, 8, 0)), 34, 0.9, C.lair)
+		end
+
+		-- the far end of a room, as seen from Base Camp
+		local function addFarMonsterSpawn(room)
+			local away = flat(room.pos) - flat(ROOM.BaseCamp.pos)
+			away = away.Magnitude > 1 and away.Unit or Vector3.new(0, 0, -1)
+			addMonsterSpawn(room, flat(room.pos) + Vector3.new(away.X * room.rx, 0, away.Z * room.rz) * 0.6)
 		end
 
 		-- walls of planks or stacked crates that block the view across big rooms
@@ -1529,13 +1513,13 @@ local function run(options)
 			tryPlace(room, 4.5, { rhoMin = 0.25, rhoMax = 0.5 }, function(p)
 				buildSign(placeAt(room, p), "BASE CAMP")
 			end)
-			addPropSpots(room, 2)
 			addLanterns(room, 4, { full = true })
-			addClutter(room, 4)
-			addHidingSpots(room, 1, { "Locker" })
+			addPropSpots(room, 6)
+			addClutter(room, 2)
 		end
 
 		function DRESS.GreatCavern(room)
+			addFarMonsterSpawn(room)
 			addLargeSpot(room)
 			for _ = 1, 2 do
 				tryPlace(room, 12, { rhoMin = 0.3, rhoMax = 0.8 }, function(p)
@@ -1546,16 +1530,15 @@ local function run(options)
 				buildScaffold(placeAt(room, p), true)
 			end)
 			addPillars(room, 3, 6, 9)
-			addPropSpots(room, 8)
-			addBarricades(room, 5)
-			addHidingSpots(room, 2)
-			addBoulders(room, 4, 4, 7)
-			addStalagmites(room, 8)
+			addBarricades(room, 4)
+			addPropSpots(room, 22)
+			addBoulders(room, 3, 4, 7)
+			addStalagmites(room, 6)
 			addLanterns(room, 7)
-			addClutter(room, 3)
 		end
 
 		function DRESS.OldMine(room)
+			addFarMonsterSpawn(room)
 			local c = flat(room.pos)
 			local e = room.entrances[1]
 			if e then -- an old rail line running out of one of the exits
@@ -1573,49 +1556,28 @@ local function run(options)
 					buildMineSupport(placeAt(room, p))
 				end)
 			end
-			addPropSpots(room, 5)
-			addBarricades(room, 2)
 			addHidingSpots(room, 1, { "Locker" })
-			addHidingSpots(room, 1, { "Crate", "Barrel" })
-			addClutter(room, 5)
+			addBarricades(room, 2)
+			addPropSpots(room, 12)
 			addLanterns(room, 2)
 		end
 
 		function DRESS.CrystalGrotto(room)
+			addFarMonsterSpawn(room)
 			for _ = 1, 3 do
 				tryPlace(room, 8, { rhoMax = 0.85, reserve = 9 }, function(p)
 					buildCrystals(placeAt(room, p, p + randDir()), rand(1.6, 2.2), pick({ C.crystalA, C.crystalB }))
 				end)
 			end
-			addPropSpots(room, 4)
 			addBarricades(room, 1)
-			for _ = 1, 12 do
+			addPropSpots(room, 12)
+			for _ = 1, 8 do
 				tryPlace(room, 3.5, { reserve = 4.5 }, function(p)
 					buildCrystals(placeAt(room, p, p + randDir()), rand(0.6, 1.1), pick({ C.crystalA, C.crystalB }))
 				end)
 			end
-			addBoulders(room, 3, 4, 6)
-			addHidingSpots(room, 2, { "Crate", "Barrel" })
+			addBoulders(room, 2, 4, 6)
 			addLanterns(room, 2)
-		end
-
-		function DRESS.ShackTown(room)
-			for _ = 1, 5 do
-				tryPlace(room, 12, { rhoMin = 0.25, rhoMax = 0.85 }, function(p)
-					buildShack(placeAt(room, p))
-				end)
-			end
-			for _ = 1, 2 do
-				tryPlace(room, 4.5, { rhoMin = 0.6, rhoMax = 0.9 }, function(p)
-					buildOuthouse(placeAt(room, p))
-				end)
-			end
-			addLargeSpot(room)
-			addPropSpots(room, 6)
-			addBarricades(room, 3)
-			addHidingSpots(room, 1, { "Barrel", "Crate" })
-			addLanterns(room, 6)
-			addClutter(room, 5)
 		end
 
 		local function dressLair(room)
@@ -1638,6 +1600,7 @@ local function run(options)
 				makePropSpot(nook, c + back * 3, 12, 12, "Small", mouth)
 			else
 				HIDE_BUILDERS[pick(HIDE_KINDS)](placeAt(nook, c + back * 3, mouth))
+				makePropSpot(nook, c + Vector3.new(-back.Z, 0, back.X) * 6 - back, 8, 12, "Small", mouth)
 			end
 			if rand(0, 1) < 0.35 and not CONFIG.DARK_CAVE then
 				local side = Vector3.new(-back.Z, 0, back.X) * 6
@@ -1667,6 +1630,34 @@ local function run(options)
 			end
 		end
 
+		-- spots for your props along the tunnels, alternating sides, clear of rooms and nook entrances
+		pcall(function()
+			for _, t in ipairs(tunnels) do
+				if t.kind == "Tunnel" then
+					local nextAt, side = 25, 1
+					for i = 2, #t.samples - 1 do
+						local s = t.samples[i]
+						if s.s >= nextAt then
+							nextAt = s.s + 40
+							local nearNook = false
+							for _, nook in ipairs(nooks) do
+								if (flat(s.pos) - nook.entrances[1]).Magnitude < 22 then
+									nearNook = true
+								end
+							end
+							if not nearNook and not insideAnyRoom(s.pos, 1.25) then
+								local tan = flat(t.samples[i + 1].pos - t.samples[i - 1].pos).Unit
+								local p = flat(s.pos) + Vector3.new(-tan.Z, 0, tan.X) * side * s.r * 0.45
+								local spotRoom = { name = t.name, pos = Vector3.new(p.X, s.pos.Y, p.Z) }
+								makePropSpot(spotRoom, p, 2 * math.min(s.r * 0.32, 4.5), s.r * 1.25, "Small", flat(s.pos))
+								side = -side
+							end
+						end
+					end
+				end
+			end
+		end)
+
 		-- lanterns along the tunnels, alternating sides
 		local lanternsOk, lanternErr = pcall(function()
 			for _, t in ipairs(tunnels) do
@@ -1692,7 +1683,7 @@ local function run(options)
 			table.insert(problems, "tunnel lanterns: " .. tostring(lanternErr))
 		end
 
-		-- invisible room volumes (handy later for "you are in ShackTown" UI, round logic, etc.)
+		-- invisible room volumes (handy later for "you are in the Old Mine" UI, round logic, etc.)
 		for _, room in ipairs(rooms) do
 			local box = marker(F.rooms, room.name, CFrame.new(W(room.pos + Vector3.new(0, room.h / 2, 0))), Vector3.new(room.rx * 2, room.h, room.rz * 2))
 			box:SetAttribute("RoomKind", room.kind)
