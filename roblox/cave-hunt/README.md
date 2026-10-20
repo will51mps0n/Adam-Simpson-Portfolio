@@ -4,16 +4,16 @@ Studio scripts for an asymmetric hide-and-seek game: one player is the monster a
 
 | File | What it does |
 | --- | --- |
-| `CaveBuilder.lua` | Carves the cave out of terrain (rooms, tunnels, a Backrooms maze) and adds hiding spots, a spawn, monster spawns, and spots saved for your models. |
-| `PlaceAssets.lua` | Takes **your** models from Workspace (closets, hiding spots, minecarts, big room, …) and puts copies around the cave. |
-| `GameScripts.lua` | Installs the gameplay: same-size hiders, flashlights (**F**), hiding (**E**), the monster, and the dark cave mood. |
+| `CaveBuilder.lua` | Carves the cave out of terrain (4 rooms joined by tunnels) and adds a spawn, monster spawns, a few hiding spots, and lots of spots saved for your models. |
+| `PlaceAssets.lua` | Takes **your** models (closets, hiding spots, minecarts, lights, big room, …) and fills the cave with copies. |
+| `GameScripts.lua` | Installs the gameplay: same-size hiders, flashlights, hiding, phones, the monster and its abilities, and the dark cave mood. |
 
 ## Quick start: one command does everything
 
 Paste this into the **Command Bar**, press Return, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/9c7b9c0a43ab4b7e1c0903f768c02e300ae71bdd/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/6784ebfdbfccbe45e17bbafa95fff6166910de4a/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
 ```
 
 It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=true` rebuilds the cave if one is already there. It also turns on **Allow HTTP Requests** for the place, which the download needs. Studio freezes for 10–30 seconds while the terrain is carved.
@@ -24,42 +24,48 @@ It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=tr
 
 ## Playing
 
-Press **Play**. You spawn in Base Camp as a **hider**:
+Press **Play**. You spawn in Base Camp as a **hider**. The **Play as Monster** button in the top-right corner switches you to the monster and back. It's there for testing until there's a round system that picks the monster at random.
+
+**Hiders**
 - **Your character:** the plain blocky Roblox body at the standard size, with your own head, face, hair, hats, skin colors and clothes.
 - **Flashlight (F):** switches your head flashlight on and off. If StarterPack has a Tool with "flash" in its name (like your Advanced Flashlight), that tool is used instead and the head flashlight stays off.
 - **Hiding (E):** walk up to any hiding spot and press **E** to hide inside it. You go invisible and your light switches off. Press **E** again to come out.
+- **Phone (hotbar, 8s cooldown):** pick another hider from the list. Their phone rings for 4 seconds: everyone nearby hears it, and "RING RING" flashes above them with a blue glow, even if they're inside a closet. They get a message saying who's calling.
 
-The **Play as Monster** button in the top-right corner turns you into the monster. Press it again ("Play as Hider") to switch back. It's there for testing until there's a round system that picks the monster at random.
-- **Spawn:** you start in one of the 3 lairs, far from Base Camp.
-- **Speed:** 26, against the hiders' 16.
+**The monster**
+- **Spawn and speed:** it spawns at the far end of the Great Cavern, the Old Mine or the Crystal Grotto. Speed is 26, against the hiders' 16.
 - **Killing:** touching a hider who isn't hiding kills them.
-- **Searching:** pressing **E** ("Search") on a hiding spot throws whoever is inside out, right next to you.
-- **Vision:** you have no flashlight, but you see the cave with a dim red night vision.
-- **Look:** by default the monster is your own character turned into a tall black creature with red eyes. To use your own monster model instead, put it in **ServerStorage** and name it `Monster`. It needs a `Humanoid` and a `HumanoidRootPart`. Its own server scripts (like an AI movement script) are switched off so they don't fight your controls; its LocalScripts, like Animate, still run.
+- **Searching:** pressing **E** ("Search") on a hiding spot throws whoever is inside out.
+- **Vision:** no flashlight, but a dim red night vision.
+- **Hotbar abilities:**
+  1. **Leap** (6s): a big lunge forward and up.
+  2. **Sense** (15s): for 4 seconds, every hider is outlined through walls and occupied hiding spots glow.
+  3. **Scent** (20s): for 8 seconds, a glowing trail shows where each hider walked in the last 30 seconds.
+  4. **Roar** (25s): hiders within 140 studs get their screen shaken and their lights knocked out for 5 seconds.
+- **Look:** by default your own character turns into a tall black creature with red eyes. To use your own monster model instead, put it in **ServerStorage** and name it `Monster`. It needs a `Humanoid` and a `HumanoidRootPart`.
+
+**How hotbar items work:** pick one (its number key, or click its slot) and it's used straight away. While it recharges, its slot counts down the seconds.
+
+**Sounds:** the ringtone and the roar use sounds built into Roblox. To use your own, change `RINGTONE` / `ROAR_SOUND` at the top of `ServerScriptService.CaveHunt_Players` to any sound ID, e.g. `"rbxassetid://1234567"`.
 
 ## What's in the cave
 
-The cave is a block of rock (800 × 200 × 800 studs) in the middle of your Baseplate.
+The cave is a block of rock (720 × 200 × 720 studs) in the middle of your Baseplate. North is -Z.
 
 ```
-             LairWest              LairNorth             LairEast
-                |    \             /   |    \             /   |
-                |   ShackTown ----'    |    `--- BACKROOMS    |
-                |        \             |            /         |
-             OldMine ---- GreatCavern -------------'    CrystalGrotto
-                  \       /    |    \                 /
-                   `----'      |     `--------------'
-                            BaseCamp
+      OldMine ------------- GreatCavern ------------- CrystalGrotto
+           \                     |                      /
+            `---------------- BaseCamp ----------------'
 ```
 
 - **BaseCamp**: player spawn, campfire, tents, a few lanterns. It's the only well-lit place.
 - **GreatCavern**: the central hall. It has a roughly 88-stud open spot for your big room, 2 shacks, rock pillars, barricades, and a climbable scaffold with a barrel on top.
 - **OldMine**: timber supports, rails, mine carts you can hide in.
 - **CrystalGrotto**: dimly glowing crystals.
-- **ShackTown**: 5 shacks (each with a wardrobe inside) and 2 outhouses.
-- **Backrooms**: the cave breaks into a yellow-wallpaper maze with damp carpet and fluorescent panels. About half the panels are dead and the rest flicker. Its dead ends hold hiding spots and your models.
-- **3 lairs**: red-lit rooms with bones, one `MonsterSpawn` each, about 390–490 studs from Base Camp.
-- **About 14 nooks**: dead-end alcoves off the tunnels. Half have one of my hiding spots, and half are saved for your models.
+- **Tunnels and nooks:** dead-end alcoves off the tunnels.
+- **Monster spawns:** at the far ends of the Great Cavern, Old Mine and Crystal Grotto, marked by a dim red glow.
+
+**Room for your props:** there are about 70 spots in the rooms, along the tunnels and in the nooks.
 
 **The mood:**
 - **Lighting:** very few lights, all dim. The rock is darker and looks wetter.
@@ -74,23 +80,22 @@ The first time `PlaceAssets` runs, it picks up the models in your Workspace (inc
 - **Decor**: names like Light, Crystal, Fire or Lamp, and everything else, including your big room.
 - **Left alone**: the Baseplate, SpawnLocations, flat parts, and anything with a Humanoid or "monster" in its name.
 
-After that first run it only uses CaveAssets, so new things you put in Workspace (like Smiler or your puddles) stay where you put them.
+After that first run it only uses CaveAssets. To add more props, drag them into **CaveAssets → Hiding** or **Decor**.
 
 **How they're placed:**
-- **Every model goes in at least once, biggest first.** Then extra copies go in while there's room: up to 6 of each hiding model, 2 of each decoration, and 1 of anything wider than 30 studs. Models with the same name count as one design.
-- **Height:** each model stands at the same height it stood at on your Baseplate, so meshes that stick out of their part don't sink into the floor.
+- **Every model goes in at least once, biggest first.** Then extra copies go in while there's room: up to 6 of each hiding model, 4 of each decoration, and 1 of anything wider than 30 studs. Small props can share a spot.
+- **Height:** each model's *visible* bottom rests on the highest point of the floor under it, so nothing sinks into the floor. Invisible helper parts (hitboxes and the like) are ignored when working this out.
 - **Lights:** lights inside your models are dimmed to 35% to keep the cave dark (`ASSET_LIGHT_SCALE`).
 - **Output report:** lists what went in, and warns about anything that didn't fit.
 
 **Making changes:**
 - **Wrong folder?** Drag it to the other folder in CaveAssets and run the command again.
-- **New models later:** drag them into CaveAssets → Hiding or Decor and run it again.
 - **Per-model control (attributes):** `Count` (number) sets how many copies; `CaveRole` (`Hiding`, `Decor` or `Skip`) overrides the sorting.
 
 ## Running one step at a time
 
 Use the same command, with only the scripts you want in `{...}`.
-- **Reshuffle your models:** use `{"PlaceAssets"}`. It doesn't rebuild the cave.
+- **Reshuffle your props:** use `{"PlaceAssets"}`. It doesn't rebuild the cave.
 - **Pass settings:** put them in the table near the end. For example, change `{OVERWRITE=true}` to `{OVERWRITE=true, SEED=7}` for a different layout.
 
 ## Settings
@@ -100,9 +105,9 @@ Use the same command, with only the scripts you want in `{...}`.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `ORIGIN` | `Vector3.new(0, 64, 0)` | Center of the cave (keep Y a multiple of 4) |
-| `SEED` | `2024` | A different number gives a different layout of tunnels, props and maze |
+| `SEED` | `2024` | A different number gives a different layout of tunnels and props |
 | `OVERWRITE` | `false` | Must be `true` to rebuild once a cave exists (the quick-start command sets it). **This wipes everything inside `Workspace.CaveSystem`.** |
-| `TUNNEL_SIZE` | `1` | Tunnels are about 11–23 studs tall, and the Backrooms ceiling is 12. Use `1.3` or more if the monster is huge. The built-in monster is about 8 studs tall. |
+| `TUNNEL_SIZE` | `1` | Tunnels are about 11–23 studs tall. Use `1.3` or more if the monster is huge. The built-in monster is about 8 studs tall. |
 | `DARK_CAVE` | `true` | Only a few dim lights. `false` puts the lanterns back in the tunnels and rooms. |
 | `DISABLE_OTHER_SPAWNS` | `true` | Disables your other SpawnLocations so playtests start in the cave |
 | `LIGHT_SHADOWS` | `false` | Shadows from the cave's lights (prettier, but slower) |
@@ -114,7 +119,7 @@ Use the same command, with only the scripts you want in `{...}`.
 | --- | --- | --- |
 | `SEED` | `false` | `false` = a new arrangement every run. A number gives the same arrangement each time. |
 | `HIDING_COPIES` | `6` | Most copies of each hiding model |
-| `DECOR_COPIES` | `2` | Most copies of each decoration |
+| `DECOR_COPIES` | `4` | Most copies of each decoration |
 | `BIG` | `30` | Models wider than this many studs are placed once (unless they have a `Count` attribute) |
 | `ASSET_LIGHT_SCALE` | `0.35` | How bright the lights inside your models are in the cave (1 = as you made them) |
 | `COLLECT_FROM_WORKSPACE` | `"auto"` | `"auto"` = pick up models from Workspace only the first time (before CaveAssets exists); `true` = every run; `false` = never |
@@ -129,7 +134,7 @@ These are CollectionService tags, so they work wherever the object is in the tre
 | `MonsterSpawn` | Part | Attributes: `Room`, `DistanceFromPlayerSpawn` |
 | `PlayerSpawn` | SpawnLocation | Base Camp |
 | `PropSpot` | Part | Attributes: `MaxFootprint`, `MaxHeight`, `Room` |
-| `CaveRoom` | Part | Invisible box around each room. Attribute: `RoomKind` (`Spawn`, `Big`, `Room`, `Maze`, `Lair`, `Nook`) |
+| `CaveRoom` | Part | Invisible box around each room. Attribute: `RoomKind` |
 | `Flicker` | Light | Flickers every few seconds (handled by `CaveHunt_Client`) |
 
 | Player attribute | Meaning |
@@ -137,12 +142,14 @@ These are CollectionService tags, so they work wherever the object is in the tre
 | `Role` | `"Hider"` or `"Monster"` |
 | `Hidden` | `true` while hiding |
 
-`ServerStorage.CaveHunt_KnockOut:Invoke(spotModel)` throws whoever is hiding in that spot out and returns that player.
+- **Knocking hiders out:** `ServerStorage.CaveHunt_KnockOut:Invoke(spotModel)` throws whoever is hiding in that spot out and returns that player.
+- **Hotbar items:** the templates live in `ServerStorage.CaveHunt_Tools`.
+- **Adding back other room types:** add a room with `kind = "Lair"` (monster lair) or `kind = "Maze"` (the Backrooms) to `ROOMS` in `CaveBuilder.lua`.
 
 ## Remove the cave completely
 
 ```lua
-workspace.CaveSystem:Destroy() workspace.Terrain:FillBlock(CFrame.new(0, 100, 0), Vector3.new(808, 208, 808), Enum.Material.Air)
+workspace.CaveSystem:Destroy() workspace.Terrain:FillBlock(CFrame.new(0, 100, 0), Vector3.new(728, 208, 728), Enum.Material.Air)
 ```
 
 This assumes the default `ORIGIN`. Re-enable your old SpawnLocation by hand if it was disabled.
