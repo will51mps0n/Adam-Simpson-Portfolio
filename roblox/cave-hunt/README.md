@@ -97,9 +97,9 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
   - **Shooting the monster:** each hit counts as one shot, whatever damage the gun does. **10 shots** kill it, and it never heals. Each shot also stuns it for **1 second**: it can't move, punch, Leap or Lunge. Everyone gets a message with how many shots are left.
   - **Killing it:** the round ends there and the hiders win.
   - **During hide time** the monster can't be hurt, so it can't be shot while it's frozen at its lair.
-  - **Reloading takes a minute.** Once a gun is empty, or its own reload starts (like pressing R), it stays empty for 60 seconds, even if its own script reloads faster. "RELOADING 42s" counts down above the hotbar while you hold it.
-  - **No friendly fire:** hiders' guns can't hurt other hiders. Set `FRIENDLY_FIRE = true` to allow it.
-  - **Settings:** `SHOTS_TO_KILL`, `STUN_TIME`, `RELOAD_TIME` and `FRIENDLY_FIRE` at the top of `ServerScriptService.CaveHunt_Players`. If you change `RELOAD_TIME`, change it at the top of the guns part of `CaveHunt_Client` too.
+  - **4 rounds, then a 10-second reload.** A gun holds 4 rounds, even if its own script would load more. Once it's empty, or its own reload starts (like pressing R), it stays empty for 10 seconds. "RELOADING 7s" counts down above the hotbar while you hold it.
+  - **Hiders can shoot each other.** How many hits that takes is up to the gun's own damage. A hider who's shot dead spectates until the round ends, like a caught one ("Bob was killed!"). To turn it off, set `FRIENDLY_FIRE = false`; then hiders' guns only hurt the monster.
+  - **Settings:** `SHOTS_TO_KILL`, `STUN_TIME`, `MAGAZINE`, `RELOAD_TIME` and `FRIENDLY_FIRE` at the top of `ServerScriptService.CaveHunt_Players`. If you change `MAGAZINE` or `RELOAD_TIME`, change them in the guns part of `StarterPlayerScripts.CaveHunt_Client` too.
 - **Phone (hotbar, 8s cooldown):** pick another hider from the list. Their phone rings for 4 seconds: everyone nearby hears it, and "RING RING" flashes above them with a blue glow, even if they're inside a closet. They get a message saying who's calling.
 
 **The monster**

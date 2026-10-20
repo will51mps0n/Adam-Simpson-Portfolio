@@ -12,7 +12,7 @@
 	        Tool from StarterPack is used instead, if you have one
 	      * your StarterPack tools go to the hiders. Guns (a Tool with an "Ammo"
 	        value, like a Luger) shoot with their own scripts: 10 hits kill the
-	        monster (each stuns it for a second) and a reload takes a minute
+	        monster (each stuns it for a second); 4 rounds, 10 seconds to reload
 	      * the monster: tall, fast, no flashlight, sees in the dark, and
 	        it has to punch a hider (click) to catch them. If ServerStorage has a rigged model
 	        called "Monster" (Humanoid + HumanoidRootPart) that's its body;
@@ -74,12 +74,14 @@ local SHRINK_SCALE = 0.5
 local SHRUNK_SPEEDS = { walk = 26, sprint = 36, crouch = 26 }
 -- Your guns (like the Luger in StarterPack) shoot with their own scripts. Whatever damage a gun does,
 -- each hit on the monster counts as one shot: SHOTS_TO_KILL shots kill it (it never heals), and each
--- one stuns it for STUN_TIME seconds. A gun (a Tool with an "Ammo" value) that runs out or starts
--- reloading stays empty for RELOAD_TIME seconds. The monster can't be hurt while the hiders hide.
+-- one stuns it for STUN_TIME seconds. A gun (a Tool with an "Ammo" value) holds MAGAZINE rounds,
+-- and once it runs out or starts reloading it stays empty for RELOAD_TIME seconds. The monster can't
+-- be hurt while the hiders hide.
 local SHOTS_TO_KILL = 10
 local STUN_TIME = 1
-local RELOAD_TIME = 60
-local FRIENDLY_FIRE = false -- false: hiders' guns can't hurt other hiders
+local MAGAZINE = 4 -- rounds per load (nil: whatever the gun itself holds)
+local RELOAD_TIME = 10
+local FRIENDLY_FIRE = true -- hiders can shoot each other (false: their guns only hurt the monster)
 -- built-in Roblox sounds; swap in any sound you like, e.g. "rbxassetid://1234567"
 local ROAR_SOUND = "rbxasset://sounds/uuhhh.mp3"
 local PUNCH_SOUND = "rbxasset://sounds/action_jump.mp3" -- (the old built-in swoosh.wav is blocked by Roblox now)
@@ -257,15 +259,19 @@ local function tell(player, text)
 	end
 end
 
--- a gun keeps its own scripts, but once it's empty (or starts reloading) it stays empty for a minute.
--- The client runs the same watch, in case the gun counts its ammo in a LocalScript.
+-- a gun keeps its own scripts, but holds MAGAZINE rounds, and once it's empty (or starts reloading)
+-- it stays empty for RELOAD_TIME. The client runs the same watch, in case the gun counts its ammo in
+-- a LocalScript.
 local function watchGun(tool)
 	local ammo = tool:IsA("Tool") and tool:FindFirstChild("Ammo")
 	if not (ammo and ammo:IsA("ValueBase") and type(ammo.Value) == "number") or tool:GetAttribute("CaveHuntGun") then
 		return
 	end
 	tool:SetAttribute("CaveHuntGun", true)
-	local full = math.max(ammo.Value, 1)
+	local full = MAGAZINE or math.max(ammo.Value, 1)
+	if ammo.Value > full then
+		ammo.Value = full
+	end
 	local function loading()
 		return (tool:GetAttribute("LoadedAt") or 0) > workspace:GetServerTimeNow()
 	end
@@ -290,7 +296,11 @@ local function watchGun(tool)
 		elseif ammo.Value <= 0 then
 			startReload()
 		elseif ammo.Value > full then
-			full = ammo.Value
+			if MAGAZINE then
+				ammo.Value = full -- the gun's own reload fills more than the magazine holds
+			else
+				full = ammo.Value
+			end
 		end
 	end)
 	local reloading = tool:FindFirstChild("Reloading")
@@ -316,7 +326,8 @@ local function watchGuns(player, character)
 	end
 end
 
--- hiders can't hurt each other: any damage that isn't the monster catching them heals straight back
+-- with FRIENDLY_FIRE off, hiders can't hurt each other: any damage that isn't the monster catching
+-- them heals straight back
 local function protectHider(character, humanoid)
 	if FRIENDLY_FIRE then
 		return
@@ -643,6 +654,7 @@ punchRemote.OnServerEvent:Connect(function(player, animated)
 			return
 		end
 		playSound(best.Character.HumanoidRootPart, HIT_SOUND, 0.5, 2)
+		best.Character:SetAttribute("CaughtByMonster", true) -- (CaveHunt_Rounds: "caught", not "killed")
 		humanoid.Health = 0
 		local reward = ServerStorage:FindFirstChild("CaveHunt_Reward") -- coins, from CaveHunt_Shop
 		if reward then
@@ -2139,15 +2151,16 @@ task.spawn(function()
 end)
 
 ------------------------------------------------------------------ dying + spectating
-local function onDied(player)
+local function onDied(player, character)
 	local role = player:GetAttribute("Role")
 	local state = info:GetAttribute("State")
 	if role == "Hider" and (state == "Hiding" or state == "Hunting") then
-		notify:FireAllClients(player.DisplayName .. " was caught!")
+		local caught = character:GetAttribute("CaughtByMonster") -- otherwise another hider shot them
+		notify:FireAllClients(player.DisplayName .. (caught and " was caught!" or " was killed!"))
 		task.wait(2)
 		if player.Parent and player:GetAttribute("Role") == "Hider" and not isAlive(player) then
 			setRole(player, "Spectator")
-			notify:FireClient(player, "You were caught! You're spectating until the round ends.")
+			notify:FireClient(player, (caught and "You were caught!" or "You died!") .. " You're spectating until the round ends.")
 		end
 		return
 	end
@@ -2164,7 +2177,7 @@ local function watch(player, character)
 	local humanoid = character:WaitForChild("Humanoid", 10)
 	if humanoid and humanoid:IsA("Humanoid") then
 		humanoid.Died:Connect(function()
-			onDied(player)
+			onDied(player, character)
 		end)
 	end
 end
@@ -3279,12 +3292,13 @@ task.spawn(function()
 	update()
 end)
 
--- Guns (a Tool with an "Ammo" value, like the Luger) shoot with their own scripts. Once one is empty
--- or starts reloading it stays empty for a minute. CaveHunt_Players does that on the server; this
--- copy covers a gun that counts its ammo in a LocalScript. While the gun in your hand is loading, a
--- countdown shows above the hotbar.
+-- Guns (a Tool with an "Ammo" value, like the Luger) shoot with their own scripts. A gun holds
+-- MAGAZINE rounds, and once it's empty or starts reloading it stays empty for RELOAD_TIME seconds.
+-- CaveHunt_Players does that on the server; this copy covers a gun that counts its ammo in a
+-- LocalScript. While the gun in your hand is loading, a countdown shows above the hotbar.
 task.spawn(function()
-	local RELOAD_TIME = 60 -- keep the same as RELOAD_TIME in CaveHunt_Players
+	local MAGAZINE = 4 -- keep these the same as MAGAZINE and RELOAD_TIME in CaveHunt_Players
+	local RELOAD_TIME = 10
 	local watched = setmetatable({}, { __mode = "k" })
 	local function watchGun(tool)
 		local ammo = tool:IsA("Tool") and tool:FindFirstChild("Ammo")
@@ -3292,7 +3306,10 @@ task.spawn(function()
 			return
 		end
 		watched[tool] = true
-		local full = math.max(ammo.Value, 1)
+		local full = MAGAZINE or math.max(ammo.Value, 1)
+		if ammo.Value > full then
+			ammo.Value = full
+		end
 		local function loading()
 			return (tool:GetAttribute("LoadedAt") or 0) > workspace:GetServerTimeNow()
 		end
@@ -3317,7 +3334,11 @@ task.spawn(function()
 			elseif ammo.Value <= 0 then
 				startReload()
 			elseif ammo.Value > full then
-				full = ammo.Value
+				if MAGAZINE then
+					ammo.Value = full
+				else
+					full = ammo.Value
+				end
 			end
 		end)
 		local reloading = tool:FindFirstChild("Reloading")
