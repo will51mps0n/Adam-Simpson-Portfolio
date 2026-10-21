@@ -13,7 +13,7 @@ Studio scripts for an asymmetric hide-and-seek game: one player is the monster a
 Paste this into the **Command Bar**, press Return, then **File → Save**:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/965dcc833a7c55f96c4985f323f847496c69e335/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/1efae8b934bda1ce47eeb7098d28568b2eab450e/roblox/cave-hunt/" for _,f in ipairs({"CaveBuilder","PlaceAssets","GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)(f=="CaveBuilder" and {OVERWRITE=true} or nil) end
 ```
 
 It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=true` rebuilds the cave if one is already there. It also turns on **Allow HTTP Requests** for the place, which the download needs. Studio may freeze for a few seconds while the terrain is carved. In a live editing session the terrain can appear a moment after the Output says it's done.
@@ -23,7 +23,7 @@ It downloads the three scripts from GitHub and runs them in order. `OVERWRITE=tr
 Use this one instead. It installs the gameplay scripts (`GameScripts`) and doesn't touch the cave or your props:
 
 ```lua
-local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/965dcc833a7c55f96c4985f323f847496c69e335/roblox/cave-hunt/" for _,f in ipairs({"GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
+local H=game:GetService("HttpService") H.HttpEnabled=true local B="https://raw.githubusercontent.com/will51mps0n/Adam-Simpson-Portfolio/1efae8b934bda1ce47eeb7098d28568b2eab450e/roblox/cave-hunt/" for _,f in ipairs({"GameScripts"}) do local M=Instance.new("ModuleScript") M.Source=H:GetAsync(B..f..".lua",true) require(M)() end
 ```
 
 **Rebuilding wipes everything inside `Workspace.CaveSystem`.** Things you put anywhere else are kept: Workspace itself, folders, ServerStorage. If the new rock would bury something of yours, it's moved onto the top of the rock, and the Output tells you what moved.
