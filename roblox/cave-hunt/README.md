@@ -81,6 +81,7 @@ Press **Play**. You spawn in Base Camp as a **hider**. The bar at the top of the
 - **Name tags:** nobody's name shows over their head, because it would show through walls.
 - **Flashlights: your own tools.** Every Tool you put in **StarterPack** (like your Advanced Flashlight, Flashlight, Model and Luger) goes in each hider's hotbar, ahead of the Phone. They work the way they're built: their own scripts handle clicking and **F**.
   - **What counts as a flashlight:** a Tool with a light inside it, or with "flash", "torch", "lantern" or "light" in its name. A gun's muzzle-flash light doesn't count.
+  - **The beam follows your eyes:** held in a hand, a tool's light would start off to the side, point wherever the arm points, and end up inside the rock when you're right up against a wall. So while a flashlight is held, its light shines from just in front of the holder's eyes, exactly where they look, on everyone's screen. It uses the tool's own brightness, colour, range, angle and on/off. The light in the hand is hidden while it's held, and the tool's scripts aren't changed.
   - **When you have one:** the built-in head flashlight below is switched off completely, and `GameScripts` doesn't use **F**, so your tools' own **F** scripts get it.
   - **The monster** never gets them (it has night vision).
   - **Hiding** puts whatever you're holding away. Take it out again after you come out.

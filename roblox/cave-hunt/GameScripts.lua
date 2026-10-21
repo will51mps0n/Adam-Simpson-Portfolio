@@ -421,13 +421,17 @@ end
 -- It's an attribute rather than the light's own position, so it never drags your own beam back.
 local lastAim = {}
 aimRemote.OnServerEvent:Connect(function(player, look)
-	local head = player.Character and player.Character:FindFirstChild("Head")
+	local character = player.Character
+	local head = character and character:FindFirstChild("Head")
 	local mount = head and head:FindFirstChild("Flashlight")
-	if not mount or typeof(look) ~= "Vector3" or look.Magnitude < 0.5 or os.clock() - (lastAim[player] or 0) < 0.05 then
+	if not head or typeof(look) ~= "Vector3" or look.Magnitude < 0.5 or os.clock() - (lastAim[player] or 0) < 0.05 then
 		return
 	end
 	lastAim[player] = os.clock()
-	mount:SetAttribute("Aim", look.Unit) -- other players' screens turn the beam (yours already points where you look)
+	-- other players' screens turn the beam (yours already points where you look): the head flashlight
+	-- gets it relative to the head, a flashlight tool in your hand gets it as a world direction
+	local target = mount or character
+	target:SetAttribute("Aim", look.Unit)
 end)
 
 toggleLight.OnServerEvent:Connect(function(player)
@@ -3463,10 +3467,79 @@ local function aimGround(head, look) -- the ground light: 50 degrees down, the w
 		groundMount.CFrame = CFrame.lookAt(groundMount.Position, groundMount.Position + dir)
 	end
 end
+
+-- Your own flashlight tools. Held in a hand, a tool's light starts off to the side, points wherever the
+-- arm points, and right up against a wall it ends up inside the rock. So on every screen, the light of
+-- a held flashlight shines from just in front of its holder's eyes instead, the way they're looking,
+-- with the tool's own brightness, colour, range, angle and on/off. The tool's own light is dimmed to 0
+-- on screens while it's held; the tool itself and its scripts aren't changed.
+local toolBeams = setmetatable({}, { __mode = "k" }) -- the tool's light -> { light = our copy, brightness = its own }
+local beamFrame = 0
+local beamRays = RaycastParams.new()
+beamRays.FilterType = Enum.RaycastFilterType.Exclude
+local function toolBeam(character, head, look) -- look: a world direction
+	local tool = character:FindFirstChildOfClass("Tool")
+	local mount = head:FindFirstChild("CaveHunt_ToolBeam")
+	if not (tool and tool:HasTag("CaveHuntFlashlight")) then
+		if mount then
+			mount:Destroy()
+		end
+		return false
+	end
+	if not mount then
+		mount = Instance.new("Attachment")
+		mount.Name = "CaveHunt_ToolBeam"
+		mount.Parent = head
+	end
+	-- just in front of the eyes, but never inside the wall you're pressed up against
+	beamRays.FilterDescendantsInstances = { character }
+	local hit = workspace:Raycast(head.Position, look, beamRays)
+	local at = head.Position + look * (hit and math.max(0, hit.Distance - 0.3) or 0.7)
+	mount.WorldCFrame = CFrame.lookAt(at, at + look)
+	for _, d in ipairs(tool:GetDescendants()) do
+		if d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+			local beam = toolBeams[d]
+			if not beam then
+				local light = Instance.new("SpotLight")
+				light.Name = "Beam"
+				light.Face = Enum.NormalId.Front
+				beam = { light = light, brightness = d.Brightness }
+				toolBeams[d] = beam
+			end
+			if d.Brightness ~= 0 then -- (its scripts changed it, or it's new): use theirs, hide the original
+				beam.brightness = d.Brightness
+				d.Brightness = 0
+			end
+			local light = beam.light
+			light.Enabled = d.Enabled
+			light.Brightness = beam.brightness
+			light.Range = d.Range
+			light.Angle = d.Angle
+			light.Color = d.Color
+			light.Shadows = true -- so it doesn't shine through rock
+			light.Parent = mount
+			beam.frame = beamFrame
+		elseif d:IsA("BasePart") and d.CastShadow then
+			d.CastShadow = false -- the flashlight itself mustn't throw a shadow over its own beam
+		end
+	end
+	return true
+end
+local smoothAim = setmetatable({}, { __mode = "k" })
+
 RunService:BindToRenderStep("CaveHunt_FlashlightAim", Enum.RenderPriority.Camera.Value + 2, function(dt)
+	beamFrame += 1
 	-- yours: exactly where the camera looks this frame
-	local head = player.Character and player.Character:FindFirstChild("Head")
+	local character = player.Character
+	local head = character and character:FindFirstChild("Head")
 	local mount = head and head:FindFirstChild("Flashlight")
+	local cameraLook = workspace.CurrentCamera.CFrame.LookVector
+	if head and not mount and toolBeam(character, head, cameraLook) then
+		if aimRemote and os.clock() - lastSentAt > 0.1 and (cameraLook - lastSent).Magnitude > 0.05 then
+			lastSent, lastSentAt = cameraLook, os.clock()
+			aimRemote:FireServer(cameraLook)
+		end
+	end
 	if mount then
 		local look = head.CFrame:VectorToObjectSpace(workspace.CurrentCamera.CFrame.LookVector)
 		mount.CFrame = CFrame.lookAt(mount.Position, mount.Position + look)
@@ -3486,6 +3559,24 @@ RunService:BindToRenderStep("CaveHunt_FlashlightAim", Enum.RenderPriority.Camera
 			local look = current:Lerp(aim, math.min(1, dt * 12))
 			otherMount.CFrame = CFrame.lookAt(otherMount.Position, otherMount.Position + look)
 			aimGround(otherHead, look)
+		elseif otherHead and not otherMount then
+			local otherCharacter = other.Character
+			local want = otherCharacter:GetAttribute("Aim") or otherHead.CFrame.LookVector
+			local look = (smoothAim[otherCharacter] or want):Lerp(want, math.min(1, dt * 12))
+			if look.Magnitude > 0.01 then
+				smoothAim[otherCharacter] = look.Unit
+				toolBeam(otherCharacter, otherHead, look.Unit)
+			end
+		end
+	end
+	-- a flashlight that's been put away (or dropped) gets its own light back
+	for original, beam in pairs(toolBeams) do
+		if beam.frame ~= beamFrame then
+			toolBeams[original] = nil
+			beam.light:Destroy()
+			if original.Parent and original.Brightness == 0 then
+				original.Brightness = beam.brightness
+			end
 		end
 	end
 end)
